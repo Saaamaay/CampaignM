@@ -244,14 +244,46 @@ client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/..."
 
 ### Looker Studio Issues
 
+**"Can't access report - This site uses cookies from Google. Allow third-party cookies to continue."**
+
+This is the most common issue with Looker Studio embeds. Browsers block third-party cookies by default. Solutions:
+
+1. **Use the "Open in New Tab" button** (easiest solution)
+   - The dashboard now includes a button to open reports in a new tab
+   - This bypasses the cookie restriction entirely
+
+2. **Enable third-party cookies in your browser:**
+
+   **Chrome/Edge:**
+   - Go to Settings → Privacy and security → Cookies and other site data
+   - Select "Allow all cookies" OR
+   - Click "See all site data and permissions" → Add `[*.]lookerstudio.google.com` to allowed sites
+
+   **Firefox:**
+   - Go to Settings → Privacy & Security
+   - Under "Enhanced Tracking Protection", select "Custom"
+   - Uncheck "Cookies" OR set to "Cross-site tracking cookies"
+
+   **Safari:**
+   - Go to Preferences → Privacy
+   - Uncheck "Prevent cross-site tracking" OR
+   - Click "Manage Website Data" and add an exception for `lookerstudio.google.com`
+
+3. **Make sure the report is publicly accessible:**
+   - In Looker Studio, click "Share" on your report
+   - Under "General access", select "Anyone with the link"
+   - Set permission to "Viewer"
+
 **Iframe appears but shows "Report not found"**
 - Verify the report sharing settings (must be public or accessible)
-- Check the URL is the embed URL, not the regular viewing URL
+- Check the URL is the embed URL (contains `/embed/`), not the regular viewing URL
+- Example embed URL: `https://lookerstudio.google.com/embed/reporting/abc-123/page/xyz`
 
-**Iframe is blank**
-- Check browser console for CORS errors
-- Ensure the report allows embedding
-- Try opening the URL directly in a new tab to verify it works
+**Iframe is blank or shows loading spinner forever**
+- Click the "Open in New Tab" button to verify the URL works
+- Check browser console for errors (F12 → Console tab)
+- Ensure the report allows embedding (some corporate accounts disable this)
+- Try in an incognito/private window to rule out browser extensions
 
 ---
 

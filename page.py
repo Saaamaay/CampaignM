@@ -1504,6 +1504,14 @@ def render_looker_embed(looker_url: str, height: int = 800):
         st.warning("No Looker Studio URL configured")
         return
 
+    # Add a button to open in new tab as fallback for cookie issues
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        st.link_button("📊 Open in New Tab", looker_url, use_container_width=True)
+
+    with col1:
+        st.caption("If the report doesn't load below, click 'Open in New Tab' or enable third-party cookies in your browser")
+
     iframe_html = f"""
     <iframe
         width="100%"
@@ -1512,10 +1520,15 @@ def render_looker_embed(looker_url: str, height: int = 800):
         frameborder="0"
         style="border:0"
         allowfullscreen
-        sandbox="allow-storage-access-by-user-activation allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox">
+        allow="storage-access">
     </iframe>
     """
-    components.html(iframe_html, height=height)
+
+    try:
+        components.html(iframe_html, height=height)
+    except Exception as e:
+        st.error(f"Failed to load Looker Studio embed: {str(e)}")
+        st.info(f"Open the report directly: {looker_url}")
 
 
 def get_bigquery_config():
