@@ -36,9 +36,9 @@ Create or edit `.streamlit/secrets.toml` in the campaign_manager directory:
 
 ```toml
 # BigQuery Configuration
+# Each table in the dataset represents a separate campaign
 BIGQUERY_PROJECT_ID = "your-gcp-project-id"
 BIGQUERY_DATASET_ID = "your-dataset-id"
-BIGQUERY_TABLE_ID = "your-table-name"
 
 # Service Account Configuration
 [GCP_SERVICE_ACCOUNT]
@@ -64,32 +64,47 @@ You can copy the values from the JSON key file you downloaded.
 
 ### 4. BigQuery Table Schema
 
-Your BigQuery table should have the following columns to work with the dashboard:
+Each table in your dataset represents a separate campaign. Your BigQuery tables should have the following columns:
 
 ```sql
-CREATE TABLE `your-project.your-dataset.your-table` (
+CREATE TABLE `your-project.your-dataset.campaign_name_1` (
   Date DATE,
-  Campaign STRING,
-  Device STRING,
+  Device_Type STRING,
   Impressions INT64,
   Clicks INT64,
-  Conversions INT64,
-  Cost FLOAT64,
-  `App/URL` STRING,
-  `Inventory Source` STRING
+  Total_Conversions INT64,
+  Media_Cost_Advertiser_Currency FLOAT64,
+  App_URL STRING,
+  Inventory_Source STRING
+);
+
+CREATE TABLE `your-project.your-dataset.campaign_name_2` (
+  Date DATE,
+  Device_Type STRING,
+  Impressions INT64,
+  Clicks INT64,
+  Total_Conversions INT64,
+  Media_Cost_Advertiser_Currency FLOAT64,
+  App_URL STRING,
+  Inventory_Source STRING
 );
 ```
 
-**Note**: Column names must match exactly (case-sensitive).
+**Important Notes**:
+- Each table name becomes the campaign name in the dashboard
+- Column names must match exactly (case-sensitive)
+- No `Campaign` or `Insertion_Order` column is needed - the table name serves as the campaign identifier
 
 ### 5. Using BigQuery in the Dashboard
 
 1. Start the Streamlit app
 2. In the **Campaign Management** section, you'll see tabs: **📤 Upload CSV** and **☁️ BigQuery**
 3. Click the **☁️ BigQuery** tab
-4. Select a campaign from the dropdown (populated from your BigQuery table)
+4. Select a campaign from the dropdown (populated from tables in your BigQuery dataset)
 5. Click **Load Campaign from BigQuery**
 6. The data will load and all existing features (charts, Xandr exports, etc.) will work normally
+
+**Note**: Each table in your dataset appears as a selectable campaign.
 
 ---
 
@@ -159,9 +174,9 @@ your-xandr-private-key
 -----END PRIVATE KEY-----"""
 
 # BigQuery Configuration (NEW)
+# Each table in the dataset represents a separate campaign
 BIGQUERY_PROJECT_ID = "my-project-12345"
 BIGQUERY_DATASET_ID = "campaign_data"
-BIGQUERY_TABLE_ID = "dv360_performance"
 
 # GCP Service Account (NEW)
 [GCP_SERVICE_ACCOUNT]
@@ -219,9 +234,10 @@ client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/..."
 - Ensure no extra quotes or formatting issues
 
 **Error: "Could not fetch campaigns from BigQuery"**
-- Verify the table exists: `project_id.dataset_id.table_id`
+- Verify the dataset exists: `project_id.dataset_id`
 - Check service account has `BigQuery Data Viewer` role
-- Ensure the table has a `Campaign` column
+- Ensure the dataset contains tables with the required schema
+- Each table in the dataset represents a separate campaign
 
 **Error: "Permission denied"**
 - Add `BigQuery Job User` role to your service account

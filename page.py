@@ -1519,15 +1519,15 @@ def render_looker_embed(looker_url: str, height: int = 800):
 
 
 def get_bigquery_config():
-    """Get BigQuery configuration from Streamlit secrets"""
+    """Get BigQuery configuration from Streamlit secrets.
+    Each table in the dataset represents a separate campaign."""
     try:
         return {
             'project_id': st.secrets.get("BIGQUERY_PROJECT_ID", ""),
-            'dataset_id': st.secrets.get("BIGQUERY_DATASET_ID", ""),
-            'table_id': st.secrets.get("BIGQUERY_TABLE_ID", "")
+            'dataset_id': st.secrets.get("BIGQUERY_DATASET_ID", "")
         }
     except:
-        return {'project_id': '', 'dataset_id': '', 'table_id': ''}
+        return {'project_id': '', 'dataset_id': ''}
 
 
 def get_looker_config():
@@ -1708,29 +1708,28 @@ def main():
                 if all(bq_config.values()):
                     st.info(f"Project: {bq_config['project_id']}")
                     st.info(f"Dataset: {bq_config['dataset_id']}")
-                    st.info(f"Table: {bq_config['table_id']}")
 
-                    # Get available campaigns
+                    # Get available campaigns (tables in the dataset)
                     campaigns_list = get_available_campaigns(
                         bq_config['project_id'],
-                        bq_config['dataset_id'],
-                        bq_config['table_id']
+                        bq_config['dataset_id']
                     )
 
                     if campaigns_list:
                         selected_bq_campaign = st.selectbox(
-                            "Select Campaign:",
+                            "Select Campaign (Table):",
                             campaigns_list,
-                            key="bq_campaign_select"
+                            key="bq_campaign_select",
+                            help="Each table represents a separate campaign"
                         )
 
                         if st.button("Load Campaign from BigQuery"):
                             with st.spinner("Querying BigQuery..."):
+                                # Use the selected campaign as the table_id
                                 bigquery_data = query_campaign_data(
                                     bq_config['project_id'],
                                     bq_config['dataset_id'],
-                                    bq_config['table_id'],
-                                    campaign_filter=selected_bq_campaign
+                                    selected_bq_campaign
                                 )
                                 if bigquery_data is not None:
                                     st.success(f"Loaded {len(bigquery_data)} rows from BigQuery")
@@ -1743,7 +1742,6 @@ def main():
 [BIGQUERY]
 BIGQUERY_PROJECT_ID = "your-project-id"
 BIGQUERY_DATASET_ID = "your-dataset-id"
-BIGQUERY_TABLE_ID = "your-table-id"
                     """, language="toml")
     
     with col3:

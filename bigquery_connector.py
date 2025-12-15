@@ -74,17 +74,16 @@ def query_campaign_data(
     project_id: str,
     dataset_id: str,
     table_id: str,
-    campaign_filter: Optional[str] = None,
     date_range: Optional[tuple] = None
 ) -> Optional[pd.DataFrame]:
     """
     Query campaign data from BigQuery.
+    Each table represents a separate campaign, so no campaign filtering is needed.
 
     Args:
         project_id: GCP project ID
         dataset_id: BigQuery dataset ID
-        table_id: BigQuery table ID
-        campaign_filter: Optional campaign name/ID to filter by
+        table_id: BigQuery table ID (represents the campaign)
         date_range: Optional tuple of (start_date, end_date) as strings
 
     Returns:
@@ -95,11 +94,11 @@ def query_campaign_data(
         if not client:
             return None
 
-        # Build the base query
+        # Build the base query - use table name as Campaign name
         query = f"""
         SELECT
             Date,
-            Insertion_Order as Campaign,
+            '{table_id}' as Campaign,
             Device_Type as Device,
             Impressions,
             Clicks,
@@ -110,10 +109,6 @@ def query_campaign_data(
         FROM `{project_id}.{dataset_id}.{table_id}`
         WHERE 1=1
         """
-
-        # Add campaign filter if provided
-        if campaign_filter:
-            query += f"\n  AND Insertion_Order = '{campaign_filter}'"
 
         # Add date range filter if provided
         if date_range:
@@ -161,33 +156,32 @@ def query_custom_sql(sql_query: str) -> Optional[pd.DataFrame]:
 
 def get_available_campaigns(
     project_id: str,
-    dataset_id: str,
-    table_id: str
+    dataset_id: str
 ) -> Optional[list]:
     """
-    Get list of available campaigns from BigQuery.
+    Get list of available campaigns (tables) from BigQuery dataset.
+    Each table represents a separate campaign.
 
     Args:
         project_id: GCP project ID
         dataset_id: BigQuery dataset ID
-        table_id: BigQuery table ID
 
     Returns:
-        List of campaign names or None if query fails
+        List of table names (campaigns) or None if query fails
     """
     try:
         client = get_bigquery_client()
         if not client:
             return None
 
-        query = f"""
-        SELECT DISTINCT Insertion_Order as Campaign
-        FROM `{project_id}.{dataset_id}.{table_id}`
-        ORDER BY Insertion_Order
-        """
+        # List all tables in the dataset
+        dataset_ref = f"{project_id}.{dataset_id}"
+        tables = client.list_tables(dataset_ref)
 
-        result = client.query(query).to_dataframe()
-        return result['Campaign'].tolist()
+        # Get table names
+        table_names = [table.table_id for table in tables]
+
+        return sorted(table_names)
 
     except Exception as e:
         st.error(f"Failed to get campaigns list: {str(e)}")
