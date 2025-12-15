@@ -124,6 +124,14 @@ def query_campaign_data(
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'])
 
+        # Rename columns to match dashboard expectations
+        column_mapping = {
+            'App_URL': 'App/URL',
+            'Inventory_Source': 'Inventory Source',
+            'Device': 'Device Type'
+        }
+        df.rename(columns=column_mapping, inplace=True)
+
         return df
 
     except Exception as e:

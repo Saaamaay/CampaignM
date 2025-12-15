@@ -64,27 +64,16 @@ You can copy the values from the JSON key file you downloaded.
 
 ### 4. BigQuery Table Schema
 
-Each table in your dataset represents a separate campaign. Your BigQuery tables should have the following columns:
+Each table in your dataset represents a separate campaign. Your BigQuery tables should have the following required columns:
 
 ```sql
 CREATE TABLE `your-project.your-dataset.campaign_name_1` (
   Date DATE,
   Device_Type STRING,
-  Impressions INT64,
-  Clicks INT64,
-  Total_Conversions INT64,
-  Media_Cost_Advertiser_Currency FLOAT64,
-  App_URL STRING,
-  Inventory_Source STRING
-);
-
-CREATE TABLE `your-project.your-dataset.campaign_name_2` (
-  Date DATE,
-  Device_Type STRING,
-  Impressions INT64,
-  Clicks INT64,
-  Total_Conversions INT64,
-  Media_Cost_Advertiser_Currency FLOAT64,
+  Impressions INTEGER,
+  Clicks INTEGER,
+  Total_Conversions FLOAT,
+  Media_Cost_Advertiser_Currency FLOAT,
   App_URL STRING,
   Inventory_Source STRING
 );
@@ -93,7 +82,17 @@ CREATE TABLE `your-project.your-dataset.campaign_name_2` (
 **Important Notes**:
 - Each table name becomes the campaign name in the dashboard
 - Column names must match exactly (case-sensitive)
-- No `Campaign` or `Insertion_Order` column is needed - the table name serves as the campaign identifier
+- No `Campaign` column is needed - the table name serves as the campaign identifier
+- `Insertion_Order` and `Line_Item` columns are optional (not used by the dashboard)
+
+**Optional columns** (for enhanced analytics):
+- `Insertion_Order_ID` (INTEGER)
+- `Line_Item_ID` (INTEGER)
+- `Line_Item` (STRING)
+- `Creative_Size` (STRING)
+- `Advertiser_Currency` (STRING)
+- `Active_View_Viewable_Impressions` (INTEGER)
+- `Active_View_Measurable_Impressions` (INTEGER)
 
 ### 5. Using BigQuery in the Dashboard
 
