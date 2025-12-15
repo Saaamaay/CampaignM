@@ -99,21 +99,21 @@ def query_campaign_data(
         query = f"""
         SELECT
             Date,
-            Campaign,
-            Device,
+            Insertion_Order as Campaign,
+            Device_Type as Device,
             Impressions,
             Clicks,
-            Conversions,
-            Cost,
-            `App/URL` as App_URL,
-            `Inventory Source` as Inventory_Source
+            Total_Conversions as Conversions,
+            Media_Cost_Advertiser_Currency as Cost,
+            App_URL,
+            Inventory_Source
         FROM `{project_id}.{dataset_id}.{table_id}`
         WHERE 1=1
         """
 
         # Add campaign filter if provided
         if campaign_filter:
-            query += f"\n  AND Campaign = '{campaign_filter}'"
+            query += f"\n  AND Insertion_Order = '{campaign_filter}'"
 
         # Add date range filter if provided
         if date_range:
@@ -181,9 +181,9 @@ def get_available_campaigns(
             return None
 
         query = f"""
-        SELECT DISTINCT Campaign
+        SELECT DISTINCT Insertion_Order as Campaign
         FROM `{project_id}.{dataset_id}.{table_id}`
-        ORDER BY Campaign
+        ORDER BY Insertion_Order
         """
 
         result = client.query(query).to_dataframe()
