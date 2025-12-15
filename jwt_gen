@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+# Generates the JWT signature, using the PyJWT library
+import jwt
+from datetime import datetime, timezone
+
+username = "Sam@13537"
+an_key_name = "my-api-key"
+priv_key_path = "my-api-key"
+
+with open(priv_key_path, 'r') as f:
+    cert = f.read()
+
+jwt_signature = jwt.encode({
+    'sub': username,
+    'iat': datetime.now(timezone.utc)
+},
+cert,
+algorithm='RS256',
+headers={
+    'kid': an_key_name,
+    'alg': 'RS256',
+    "typ": "JWT"
+})
+
+print(jwt_signature)
