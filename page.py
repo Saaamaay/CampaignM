@@ -30,9 +30,43 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Campaign Manager Dashboard", layout="wide")
 
-# GitHub storage configuration
-GITHUB_API_BASE = "https://api.github.com"
-CAMPAIGNS_PATH = "saved_campaigns"
+# Campaign metadata management (simple, no data storage)
+def get_campaigns_metadata():
+    """Get list of campaign metadata from session state"""
+    if 'campaigns' not in st.session_state:
+        st.session_state.campaigns = []
+    return st.session_state.campaigns
+
+def add_campaign_metadata(name, bigquery_table, project_id, dataset_id, dsp="DV360"):
+    """Add a new campaign metadata"""
+    if 'campaigns' not in st.session_state:
+        st.session_state.campaigns = []
+
+    campaign = {
+        'name': name,
+        'bigquery_table': bigquery_table,
+        'project_id': project_id,
+        'dataset_id': dataset_id,
+        'dsp': dsp,
+        'created_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    st.session_state.campaigns.append(campaign)
+    return True
+
+def delete_campaign_metadata(name):
+    """Delete a campaign by name"""
+    if 'campaigns' in st.session_state:
+        st.session_state.campaigns = [c for c in st.session_state.campaigns if c['name'] != name]
+        return True
+    return False
+
+def get_campaign_by_name(name):
+    """Get campaign metadata by name"""
+    campaigns = get_campaigns_metadata()
+    for campaign in campaigns:
+        if campaign['name'] == name:
+            return campaign
+    return None
 
 def inject_looker_style_css():
     """Inject custom CSS for Looker-style dashboard appearance"""
@@ -1742,164 +1776,121 @@ def show_home_page():
     st.title("📊 Campaign Manager Dashboard")
     st.caption("Select a campaign to view details or create a new one")
 
-    # Get all saved campaigns
-    saved_campaigns = get_saved_campaigns()
+    # Get all campaign metadata
+    campaigns = get_campaigns_metadata()
 
     # Stats section
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("Total Campaigns", len(saved_campaigns))
+        st.metric("Total Campaigns", len(campaigns))
     with col2:
-        st.metric("Active", len(saved_campaigns))
+        st.metric("Active", len(campaigns))
     with col3:
-        st.metric("Storage", "GitHub" if all(get_github_config().values()) else "Local")
+        bq_config = get_bigquery_config()
+        st.metric("Data Source", "BigQuery" if all(bq_config.values()) else "Not Configured")
 
     st.divider()
 
     # Add new campaign section
     with st.expander("➕ Add New Campaign", expanded=False):
-        st.subheader("Create New Campaign")
+        st.subheader("Link BigQuery Table to Campaign")
 
-        tab1, tab2 = st.tabs(["☁️ From BigQuery", "📤 Upload CSV"])
+        bq_config = get_bigquery_config()
+        if all(bq_config.values()):
+            st.info(f"Project: {bq_config['project_id']} | Dataset: {bq_config['dataset_id']}")
 
-        with tab1:
-            bq_config = get_bigquery_config()
-            if all(bq_config.values()):
-                st.info(f"Project: {bq_config['project_id']} | Dataset: {bq_config['dataset_id']}")
+            # Get available tables
+            campaigns_list = get_available_campaigns(
+                bq_config['project_id'],
+                bq_config['dataset_id']
+            )
 
-                # Get available tables
-                campaigns_list = get_available_campaigns(
-                    bq_config['project_id'],
-                    bq_config['dataset_id']
-                )
+            if campaigns_list:
+                col1, col2 = st.columns([2, 1])
 
-                if campaigns_list:
-                    col1, col2 = st.columns([2, 1])
+                with col1:
+                    selected_table = st.selectbox(
+                        "Select BigQuery Table:",
+                        campaigns_list,
+                        key="new_bq_table"
+                    )
 
-                    with col1:
-                        selected_table = st.selectbox(
-                            "Select BigQuery Table:",
-                            campaigns_list,
-                            key="new_bq_table"
-                        )
+                with col2:
+                    campaign_name = st.text_input(
+                        "Campaign Name:",
+                        value=selected_table,
+                        key="new_campaign_name",
+                        help="Give this campaign a friendly name"
+                    )
 
-                    with col2:
-                        campaign_name = st.text_input(
-                            "Campaign Name:",
-                            value=selected_table,
-                            key="new_campaign_name",
-                            help="Give this campaign a friendly name"
-                        )
-
-                    if st.button("Create Campaign from BigQuery", type="primary"):
-                        if campaign_name:
-                            with st.spinner(f"Loading data from {selected_table}..."):
-                                bigquery_data = query_campaign_data(
-                                    bq_config['project_id'],
-                                    bq_config['dataset_id'],
-                                    selected_table
-                                )
-                                if bigquery_data is not None:
-                                    # Save the campaign
-                                    result_message = save_campaign_data(
-                                        bigquery_data,
-                                        campaign_name,
-                                        "DV360",
-                                        {'selected_kpis': ['CTR', 'VCR'], 'trend_kpi': 'Impressions'}
-                                    )
-                                    if "Error" not in result_message:
-                                        st.success(f"✅ Created campaign: {campaign_name}")
-                                        st.rerun()
-                                    else:
-                                        st.error(result_message)
-                                else:
-                                    st.error("Failed to load data from BigQuery")
+                if st.button("Create Campaign Card", type="primary"):
+                    if campaign_name:
+                        # Check if campaign with this name already exists
+                        existing = get_campaign_by_name(campaign_name)
+                        if existing:
+                            st.error(f"Campaign '{campaign_name}' already exists!")
                         else:
-                            st.warning("Please enter a campaign name")
-                else:
-                    st.warning("No tables found in BigQuery dataset")
-            else:
-                st.info("Configure BigQuery credentials in Streamlit secrets to use this feature")
-
-        with tab2:
-            st.write("Upload CSV and name your campaign:")
-            campaign_name_csv = st.text_input(
-                "Campaign Name:",
-                key="csv_campaign_name",
-                help="Enter a name for this campaign"
-            )
-            dsp = st.selectbox("Select DSP", ["DV360"], key="csv_dsp_new")
-            uploaded_file = st.file_uploader(
-                "Upload CSV file",
-                type=['csv'],
-                key="new_csv_file"
-            )
-
-            if st.button("Create Campaign from CSV", type="primary"):
-                if campaign_name_csv and uploaded_file:
-                    try:
-                        cleaned_csv = clean_csv_before_loading(uploaded_file)
-                        df = pd.read_csv(cleaned_csv)
-                        result_message = save_campaign_data(
-                            df,
-                            campaign_name_csv,
-                            dsp,
-                            {'selected_kpis': ['CTR', 'VCR'], 'trend_kpi': 'Impressions'}
-                        )
-                        if "Error" not in result_message:
-                            st.success(f"✅ Created campaign: {campaign_name_csv}")
+                            # Just save the metadata
+                            add_campaign_metadata(
+                                campaign_name,
+                                selected_table,
+                                bq_config['project_id'],
+                                bq_config['dataset_id'],
+                                "DV360"
+                            )
+                            st.success(f"✅ Created campaign card: {campaign_name}")
                             st.rerun()
-                        else:
-                            st.error(result_message)
-                    except Exception as e:
-                        st.error(f"Error creating campaign: {str(e)}")
-                else:
-                    st.warning("Please enter a campaign name and upload a file")
+                    else:
+                        st.warning("Please enter a campaign name")
+            else:
+                st.warning("No tables found in BigQuery dataset")
+        else:
+            st.info("Configure BigQuery credentials in Streamlit secrets to use this feature")
+            st.code("""
+[BIGQUERY]
+BIGQUERY_PROJECT_ID = "your-project-id"
+BIGQUERY_DATASET_ID = "your-dataset-id"
+            """, language="toml")
 
     st.divider()
 
     # Display campaign cards
-    if saved_campaigns:
+    if campaigns:
         st.subheader("Your Campaigns")
 
         # Display cards in a grid (3 columns)
         num_cols = 3
-        for i in range(0, len(saved_campaigns), num_cols):
+        for i in range(0, len(campaigns), num_cols):
             cols = st.columns(num_cols)
             for j, col in enumerate(cols):
                 idx = i + j
-                if idx < len(saved_campaigns):
-                    campaign = saved_campaigns[idx]
+                if idx < len(campaigns):
+                    campaign = campaigns[idx]
                     with col:
                         # Create card
                         with st.container():
-                            st.markdown(f"### {campaign}")
+                            st.markdown(f"### {campaign['name']}")
 
-                            # Load campaign metadata if available
-                            campaign_data = load_campaign_data(campaign)
-                            if campaign_data:
-                                rows = campaign_data.get('row_count', 0)
-                                saved_date = campaign_data.get('saved_date', 'Unknown')
-                                dsp = campaign_data.get('dsp', 'Unknown')
-
-                                st.caption(f"📅 {saved_date}")
-                                st.caption(f"📊 {rows:,} rows | DSP: {dsp}")
+                            # Display campaign metadata
+                            st.caption(f"📅 {campaign['created_date']}")
+                            st.caption(f"📊 Table: {campaign['bigquery_table']}")
+                            st.caption(f"🔧 DSP: {campaign['dsp']}")
 
                             col_a, col_b = st.columns(2)
                             with col_a:
-                                if st.button("View", key=f"view_{campaign}", type="primary", use_container_width=True):
+                                if st.button("View", key=f"view_{campaign['name']}", type="primary", use_container_width=True):
                                     st.session_state.current_view = "campaign"
-                                    st.session_state.selected_campaign = campaign
+                                    st.session_state.selected_campaign = campaign['name']
                                     st.rerun()
                             with col_b:
-                                if st.button("🗑️", key=f"delete_{campaign}", use_container_width=True):
-                                    if delete_campaign_data(campaign):
-                                        st.success(f"Deleted {campaign}")
+                                if st.button("🗑️", key=f"delete_{campaign['name']}", use_container_width=True):
+                                    if delete_campaign_metadata(campaign['name']):
+                                        st.success(f"Deleted {campaign['name']}")
                                         st.rerun()
 
                             st.divider()
     else:
-        st.info("No campaigns yet. Create your first campaign above!")
+        st.info("No campaigns yet. Create your first campaign card above!")
 
 
 def show_campaign_overview():
@@ -1917,117 +1908,48 @@ def show_campaign_overview():
 
     st.caption("Campaign Overview & Management")
 
-    # Load campaign data
-    campaign_data = load_campaign_data(campaign_name)
-    if not campaign_data or 'dataframe' not in campaign_data:
-        st.error("Failed to load campaign data")
+    # Get campaign metadata
+    campaign_meta = get_campaign_by_name(campaign_name)
+    if not campaign_meta:
+        st.error(f"Campaign '{campaign_name}' not found")
         return
 
-    df = campaign_data['dataframe']
-    dsp = campaign_data.get('dsp', 'DV360')
+    # Load fresh data from BigQuery
+    with st.spinner(f"Loading data from BigQuery..."):
+        df = query_campaign_data(
+            campaign_meta['project_id'],
+            campaign_meta['dataset_id'],
+            campaign_meta['bigquery_table']
+        )
+
+    if df is None or df.empty:
+        st.error("Failed to load campaign data from BigQuery")
+        return
+
+    dsp = campaign_meta['dsp']
 
     # Store in session state
     st.session_state.current_campaign = campaign_name
     st.session_state.current_df = df
     st.session_state.current_dsp = dsp
 
-    # Restore KPI settings if available
-    if 'kpi_settings' in campaign_data and campaign_data['kpi_settings']:
-        st.session_state.kpi_settings.update(campaign_data['kpi_settings'])
-
     # Campaign info and actions
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
 
     with col1:
         st.info(f"**DSP:** {dsp}")
-        st.info(f"**Rows:** {len(df):,}")
 
     with col2:
-        saved_date = campaign_data.get('saved_date', 'Unknown')
-        st.info(f"**Last Updated:** {saved_date}")
+        st.info(f"**Rows:** {len(df):,}")
 
     with col3:
-        with st.popover("⚙️ Actions"):
-            if st.button("🔄 Refresh Data", use_container_width=True):
-                # Reload from BigQuery if possible
-                bq_config = get_bigquery_config()
-                if all(bq_config.values()):
-                    st.info("Feature coming soon: Refresh from BigQuery")
+        st.info(f"**Table:** {campaign_meta['bigquery_table']}")
 
-            if st.button("📥 Download CSV", use_container_width=True):
-                csv = df.to_csv(index=False)
-                st.download_button(
-                    "Download",
-                    csv,
-                    f"{campaign_name}.csv",
-                    "text/csv",
-                    key="download_csv"
-                )
+    with col4:
+        if st.button("🔄", help="Refresh data from BigQuery", use_container_width=True):
+            st.rerun()
 
     st.divider()
-
-    # Override campaign data section
-    with st.expander("🔄 Update Campaign Data"):
-        st.write("**Replace data for this campaign**")
-
-        tab1, tab2 = st.tabs(["📤 Upload CSV", "☁️ BigQuery"])
-
-        uploaded_file = None
-        bigquery_data = None
-
-        with tab1:
-            uploaded_file = st.file_uploader(
-                "Upload new CSV data:",
-                type=['csv'],
-                help="Replace current campaign data with new CSV",
-                key="override_csv"
-            )
-
-            if uploaded_file:
-                if st.button("Update from CSV"):
-                    try:
-                        cleaned_csv = clean_csv_before_loading(uploaded_file)
-                        new_df = pd.read_csv(cleaned_csv)
-                        current_kpi_settings = st.session_state.get('kpi_settings', {})
-                        result_message = save_campaign_data(new_df, campaign_name, dsp, current_kpi_settings)
-                        if "Error" not in result_message:
-                            st.success(f"✅ Updated campaign: {campaign_name}")
-                            st.rerun()
-                        else:
-                            st.error(result_message)
-                    except Exception as e:
-                        st.error(f"Error updating campaign: {str(e)}")
-
-        with tab2:
-            bq_config = get_bigquery_config()
-            if all(bq_config.values()):
-                campaigns_list = get_available_campaigns(
-                    bq_config['project_id'],
-                    bq_config['dataset_id']
-                )
-                if campaigns_list:
-                    selected_bq_table = st.selectbox(
-                        "Select BigQuery Table:",
-                        campaigns_list,
-                        key="override_bq_table"
-                    )
-                    if st.button("Update from BigQuery"):
-                        with st.spinner("Loading from BigQuery..."):
-                            bigquery_data = query_campaign_data(
-                                bq_config['project_id'],
-                                bq_config['dataset_id'],
-                                selected_bq_table
-                            )
-                            if bigquery_data is not None:
-                                current_kpi_settings = st.session_state.get('kpi_settings', {})
-                                result_message = save_campaign_data(bigquery_data, campaign_name, dsp, current_kpi_settings)
-                                if "Error" not in result_message:
-                                    st.success(f"✅ Updated campaign: {campaign_name}")
-                                    st.rerun()
-                                else:
-                                    st.error(result_message)
-            else:
-                st.info("Configure BigQuery in secrets to use this feature")
 
     # Inventory source mapping manager
     all_mappings = get_all_inventory_source_mappings()
