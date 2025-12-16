@@ -85,46 +85,17 @@ def inject_looker_style_css():
         color: #666 !important;
     }
 
-    /* Proper spacing to prevent cutoff */
+    /* Balanced spacing */
     .block-container {
-        padding-top: 3rem !important;
+        padding-top: 1.5rem !important;
         padding-bottom: 1rem !important;
     }
 
-    /* Prevent text cutoff */
+    /* Prevent text cutoff without excessive margins */
     .stMarkdown, .stTitle, h1, h2, h3 {
-        margin-top: 1rem !important;
-        margin-bottom: 1rem !important;
-        line-height: 1.4 !important;
-    }
-
-    /* Fix selectbox text cutoff */
-    .stSelectbox > div > div {
-        padding: 0.5rem !important;
-        min-height: 2.5rem !important;
-    }
-
-    /* Fix input and selectbox internal padding */
-    .stSelectbox input, .stSelectbox div[data-baseweb="select"] > div {
-        padding-top: 0.5rem !important;
-        padding-bottom: 0.5rem !important;
-    }
-
-    /* Ensure buttons have proper spacing */
-    .stButton button {
-        margin-top: 0.5rem !important;
-    }
-
-    /* Fix number input text cutoff */
-    .stNumberInput > div > div > input {
-        padding-top: 0.5rem !important;
-        padding-bottom: 0.5rem !important;
-    }
-
-    /* Ensure multiselect has proper spacing */
-    .stMultiSelect > div > div {
-        padding: 0.5rem !important;
-        min-height: 2.5rem !important;
+        margin-top: 0.25rem !important;
+        margin-bottom: 0.5rem !important;
+        line-height: 1.3 !important;
     }
 
     /* KPI indicator dots */
@@ -1932,9 +1903,6 @@ BIGQUERY_DATASET_ID = "your-dataset-id"
 def show_campaign_overview():
     """Display detailed overview page for a specific campaign"""
     campaign_name = st.session_state.selected_campaign
-
-    # Add spacing at top to prevent cutoff
-    st.markdown("<div style='margin-top: 1rem;'></div>", unsafe_allow_html=True)
 
     # Top navigation bar
     col1, col2 = st.columns([1, 5])
