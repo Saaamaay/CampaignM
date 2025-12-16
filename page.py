@@ -1906,8 +1906,6 @@ def show_campaign_overview():
     with col2:
         st.title(f"📊 {campaign_name}")
 
-    st.caption("Campaign Overview & Management")
-
     # Get campaign metadata
     campaign_meta = get_campaign_by_name(campaign_name)
     if not campaign_meta:
@@ -1933,60 +1931,16 @@ def show_campaign_overview():
     st.session_state.current_df = df
     st.session_state.current_dsp = dsp
 
-    # Campaign info and actions
-    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
-
-    with col1:
-        st.info(f"**DSP:** {dsp}")
-
-    with col2:
-        st.info(f"**Rows:** {len(df):,}")
-
-    with col3:
-        st.info(f"**Table:** {campaign_meta['bigquery_table']}")
-
-    with col4:
-        if st.button("🔄", help="Refresh data from BigQuery", use_container_width=True):
-            st.rerun()
-
-    st.divider()
-
-    # Inventory source mapping manager
-    all_mappings = get_all_inventory_source_mappings()
-    if 'Inventory Source' in df.columns:
-        unique_sources = df['Inventory Source'].unique()
-        has_unmapped = any(
-            pd.notna(source) and source not in all_mappings
-            for source in unique_sources
-        )
-    else:
-        has_unmapped = False
-
-    with st.expander("🗂️ Manage Inventory Source Mappings", expanded=has_unmapped):
-        st.caption("Map inventory sources to Xandr Deal IDs for automatic lookup")
-        show_inventory_source_mapping_manager(df)
-
-    st.divider()
-
     # Calculate metrics with validation
     metrics = calculate_metrics(df)
-
-    # Display validation messages
-    if metrics['validation_messages']:
-        with st.expander("🔍 Data Validation Report", expanded=False):
-            for message in metrics['validation_messages']:
-                if "⚠️" in message:
-                    st.warning(message)
-                elif "✅" in message:
-                    st.success(message)
-                else:
-                    st.info(message)
 
     # Use cleaned dataframe for visualizations
     df_clean = metrics['cleaned_df']
 
     # Inject Looker-style CSS
     inject_looker_style_css()
+
+    st.divider()
 
     st.subheader("Overview")
     create_overview_cards(metrics)
@@ -2134,6 +2088,52 @@ def show_campaign_overview():
                         if st.button("Remove", key=f"remove_{name}"):
                             del st.session_state.looker_urls[name]
                             st.rerun()
+
+    # Campaign Management Section (at bottom)
+    st.divider()
+    st.subheader("Campaign Overview & Management")
+
+    # Campaign info and actions
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+
+    with col1:
+        st.info(f"**DSP:** {dsp}")
+
+    with col2:
+        st.info(f"**Rows:** {len(df):,}")
+
+    with col3:
+        st.info(f"**Table:** {campaign_meta['bigquery_table']}")
+
+    with col4:
+        if st.button("🔄", help="Refresh data from BigQuery", use_container_width=True):
+            st.rerun()
+
+    # Inventory source mapping manager
+    all_mappings = get_all_inventory_source_mappings()
+    if 'Inventory Source' in df.columns:
+        unique_sources = df['Inventory Source'].unique()
+        has_unmapped = any(
+            pd.notna(source) and source not in all_mappings
+            for source in unique_sources
+        )
+    else:
+        has_unmapped = False
+
+    with st.expander("🗂️ Manage Inventory Source Mappings", expanded=has_unmapped):
+        st.caption("Map inventory sources to Xandr Deal IDs for automatic lookup")
+        show_inventory_source_mapping_manager(df)
+
+    # Display validation messages
+    if metrics['validation_messages']:
+        with st.expander("🔍 Data Validation Report", expanded=False):
+            for message in metrics['validation_messages']:
+                if "⚠️" in message:
+                    st.warning(message)
+                elif "✅" in message:
+                    st.success(message)
+                else:
+                    st.info(message)
 
 
 def main():
