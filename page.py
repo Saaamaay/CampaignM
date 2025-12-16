@@ -1737,16 +1737,494 @@ def get_looker_config():
         return {}
 
 
-def main():
+def show_home_page():
+    """Display home page with dashboard of all campaigns as cards"""
     st.title("📊 Campaign Manager Dashboard")
-    st.caption("With automatic data validation and cleaning")
+    st.caption("Select a campaign to view details or create a new one")
 
+    # Get all saved campaigns
+    saved_campaigns = get_saved_campaigns()
+
+    # Stats section
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Campaigns", len(saved_campaigns))
+    with col2:
+        st.metric("Active", len(saved_campaigns))
+    with col3:
+        st.metric("Storage", "GitHub" if all(get_github_config().values()) else "Local")
+
+    st.divider()
+
+    # Add new campaign section
+    with st.expander("➕ Add New Campaign", expanded=False):
+        st.subheader("Create New Campaign")
+
+        tab1, tab2 = st.tabs(["☁️ From BigQuery", "📤 Upload CSV"])
+
+        with tab1:
+            bq_config = get_bigquery_config()
+            if all(bq_config.values()):
+                st.info(f"Project: {bq_config['project_id']} | Dataset: {bq_config['dataset_id']}")
+
+                # Get available tables
+                campaigns_list = get_available_campaigns(
+                    bq_config['project_id'],
+                    bq_config['dataset_id']
+                )
+
+                if campaigns_list:
+                    col1, col2 = st.columns([2, 1])
+
+                    with col1:
+                        selected_table = st.selectbox(
+                            "Select BigQuery Table:",
+                            campaigns_list,
+                            key="new_bq_table"
+                        )
+
+                    with col2:
+                        campaign_name = st.text_input(
+                            "Campaign Name:",
+                            value=selected_table,
+                            key="new_campaign_name",
+                            help="Give this campaign a friendly name"
+                        )
+
+                    if st.button("Create Campaign from BigQuery", type="primary"):
+                        if campaign_name:
+                            with st.spinner(f"Loading data from {selected_table}..."):
+                                bigquery_data = query_campaign_data(
+                                    bq_config['project_id'],
+                                    bq_config['dataset_id'],
+                                    selected_table
+                                )
+                                if bigquery_data is not None:
+                                    # Save the campaign
+                                    result_message = save_campaign_data(
+                                        bigquery_data,
+                                        campaign_name,
+                                        "DV360",
+                                        {'selected_kpis': ['CTR', 'VCR'], 'trend_kpi': 'Impressions'}
+                                    )
+                                    if "Error" not in result_message:
+                                        st.success(f"✅ Created campaign: {campaign_name}")
+                                        st.rerun()
+                                    else:
+                                        st.error(result_message)
+                                else:
+                                    st.error("Failed to load data from BigQuery")
+                        else:
+                            st.warning("Please enter a campaign name")
+                else:
+                    st.warning("No tables found in BigQuery dataset")
+            else:
+                st.info("Configure BigQuery credentials in Streamlit secrets to use this feature")
+
+        with tab2:
+            st.write("Upload CSV and name your campaign:")
+            campaign_name_csv = st.text_input(
+                "Campaign Name:",
+                key="csv_campaign_name",
+                help="Enter a name for this campaign"
+            )
+            dsp = st.selectbox("Select DSP", ["DV360"], key="csv_dsp_new")
+            uploaded_file = st.file_uploader(
+                "Upload CSV file",
+                type=['csv'],
+                key="new_csv_file"
+            )
+
+            if st.button("Create Campaign from CSV", type="primary"):
+                if campaign_name_csv and uploaded_file:
+                    try:
+                        cleaned_csv = clean_csv_before_loading(uploaded_file)
+                        df = pd.read_csv(cleaned_csv)
+                        result_message = save_campaign_data(
+                            df,
+                            campaign_name_csv,
+                            dsp,
+                            {'selected_kpis': ['CTR', 'VCR'], 'trend_kpi': 'Impressions'}
+                        )
+                        if "Error" not in result_message:
+                            st.success(f"✅ Created campaign: {campaign_name_csv}")
+                            st.rerun()
+                        else:
+                            st.error(result_message)
+                    except Exception as e:
+                        st.error(f"Error creating campaign: {str(e)}")
+                else:
+                    st.warning("Please enter a campaign name and upload a file")
+
+    st.divider()
+
+    # Display campaign cards
+    if saved_campaigns:
+        st.subheader("Your Campaigns")
+
+        # Display cards in a grid (3 columns)
+        num_cols = 3
+        for i in range(0, len(saved_campaigns), num_cols):
+            cols = st.columns(num_cols)
+            for j, col in enumerate(cols):
+                idx = i + j
+                if idx < len(saved_campaigns):
+                    campaign = saved_campaigns[idx]
+                    with col:
+                        # Create card
+                        with st.container():
+                            st.markdown(f"### {campaign}")
+
+                            # Load campaign metadata if available
+                            campaign_data = load_campaign_data(campaign)
+                            if campaign_data:
+                                rows = campaign_data.get('row_count', 0)
+                                saved_date = campaign_data.get('saved_date', 'Unknown')
+                                dsp = campaign_data.get('dsp', 'Unknown')
+
+                                st.caption(f"📅 {saved_date}")
+                                st.caption(f"📊 {rows:,} rows | DSP: {dsp}")
+
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                if st.button("View", key=f"view_{campaign}", type="primary", use_container_width=True):
+                                    st.session_state.current_view = "campaign"
+                                    st.session_state.selected_campaign = campaign
+                                    st.rerun()
+                            with col_b:
+                                if st.button("🗑️", key=f"delete_{campaign}", use_container_width=True):
+                                    if delete_campaign_data(campaign):
+                                        st.success(f"Deleted {campaign}")
+                                        st.rerun()
+
+                            st.divider()
+    else:
+        st.info("No campaigns yet. Create your first campaign above!")
+
+
+def show_campaign_overview():
+    """Display detailed overview page for a specific campaign"""
+    campaign_name = st.session_state.selected_campaign
+
+    # Top navigation bar
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("← Back to Home"):
+            st.session_state.current_view = "home"
+            st.rerun()
+    with col2:
+        st.title(f"📊 {campaign_name}")
+
+    st.caption("Campaign Overview & Management")
+
+    # Load campaign data
+    campaign_data = load_campaign_data(campaign_name)
+    if not campaign_data or 'dataframe' not in campaign_data:
+        st.error("Failed to load campaign data")
+        return
+
+    df = campaign_data['dataframe']
+    dsp = campaign_data.get('dsp', 'DV360')
+
+    # Store in session state
+    st.session_state.current_campaign = campaign_name
+    st.session_state.current_df = df
+    st.session_state.current_dsp = dsp
+
+    # Restore KPI settings if available
+    if 'kpi_settings' in campaign_data and campaign_data['kpi_settings']:
+        st.session_state.kpi_settings.update(campaign_data['kpi_settings'])
+
+    # Campaign info and actions
+    col1, col2, col3 = st.columns([2, 2, 1])
+
+    with col1:
+        st.info(f"**DSP:** {dsp}")
+        st.info(f"**Rows:** {len(df):,}")
+
+    with col2:
+        saved_date = campaign_data.get('saved_date', 'Unknown')
+        st.info(f"**Last Updated:** {saved_date}")
+
+    with col3:
+        with st.popover("⚙️ Actions"):
+            if st.button("🔄 Refresh Data", use_container_width=True):
+                # Reload from BigQuery if possible
+                bq_config = get_bigquery_config()
+                if all(bq_config.values()):
+                    st.info("Feature coming soon: Refresh from BigQuery")
+
+            if st.button("📥 Download CSV", use_container_width=True):
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    "Download",
+                    csv,
+                    f"{campaign_name}.csv",
+                    "text/csv",
+                    key="download_csv"
+                )
+
+    st.divider()
+
+    # Override campaign data section
+    with st.expander("🔄 Update Campaign Data"):
+        st.write("**Replace data for this campaign**")
+
+        tab1, tab2 = st.tabs(["📤 Upload CSV", "☁️ BigQuery"])
+
+        uploaded_file = None
+        bigquery_data = None
+
+        with tab1:
+            uploaded_file = st.file_uploader(
+                "Upload new CSV data:",
+                type=['csv'],
+                help="Replace current campaign data with new CSV",
+                key="override_csv"
+            )
+
+            if uploaded_file:
+                if st.button("Update from CSV"):
+                    try:
+                        cleaned_csv = clean_csv_before_loading(uploaded_file)
+                        new_df = pd.read_csv(cleaned_csv)
+                        current_kpi_settings = st.session_state.get('kpi_settings', {})
+                        result_message = save_campaign_data(new_df, campaign_name, dsp, current_kpi_settings)
+                        if "Error" not in result_message:
+                            st.success(f"✅ Updated campaign: {campaign_name}")
+                            st.rerun()
+                        else:
+                            st.error(result_message)
+                    except Exception as e:
+                        st.error(f"Error updating campaign: {str(e)}")
+
+        with tab2:
+            bq_config = get_bigquery_config()
+            if all(bq_config.values()):
+                campaigns_list = get_available_campaigns(
+                    bq_config['project_id'],
+                    bq_config['dataset_id']
+                )
+                if campaigns_list:
+                    selected_bq_table = st.selectbox(
+                        "Select BigQuery Table:",
+                        campaigns_list,
+                        key="override_bq_table"
+                    )
+                    if st.button("Update from BigQuery"):
+                        with st.spinner("Loading from BigQuery..."):
+                            bigquery_data = query_campaign_data(
+                                bq_config['project_id'],
+                                bq_config['dataset_id'],
+                                selected_bq_table
+                            )
+                            if bigquery_data is not None:
+                                current_kpi_settings = st.session_state.get('kpi_settings', {})
+                                result_message = save_campaign_data(bigquery_data, campaign_name, dsp, current_kpi_settings)
+                                if "Error" not in result_message:
+                                    st.success(f"✅ Updated campaign: {campaign_name}")
+                                    st.rerun()
+                                else:
+                                    st.error(result_message)
+            else:
+                st.info("Configure BigQuery in secrets to use this feature")
+
+    # Inventory source mapping manager
+    all_mappings = get_all_inventory_source_mappings()
+    if 'Inventory Source' in df.columns:
+        unique_sources = df['Inventory Source'].unique()
+        has_unmapped = any(
+            pd.notna(source) and source not in all_mappings
+            for source in unique_sources
+        )
+    else:
+        has_unmapped = False
+
+    with st.expander("🗂️ Manage Inventory Source Mappings", expanded=has_unmapped):
+        st.caption("Map inventory sources to Xandr Deal IDs for automatic lookup")
+        show_inventory_source_mapping_manager(df)
+
+    st.divider()
+
+    # Calculate metrics with validation
+    metrics = calculate_metrics(df)
+
+    # Display validation messages
+    if metrics['validation_messages']:
+        with st.expander("🔍 Data Validation Report", expanded=False):
+            for message in metrics['validation_messages']:
+                if "⚠️" in message:
+                    st.warning(message)
+                elif "✅" in message:
+                    st.success(message)
+                else:
+                    st.info(message)
+
+    # Use cleaned dataframe for visualizations
+    df_clean = metrics['cleaned_df']
+
+    # Inject Looker-style CSS
+    inject_looker_style_css()
+
+    st.subheader("Overview")
+    create_overview_cards(metrics)
+
+    st.subheader("Key Performance Indicators")
+
+    # KPI selection
+    available_kpis = ['CTR', 'VCR']
+    if metrics['cost'] > 0:
+        available_kpis.extend(['CPC'])
+    if metrics['conversions'] > 0:
+        available_kpis.extend(['CPA'])
+
+    default_kpis = [kpi for kpi in st.session_state.kpi_settings.get('selected_kpis', ['CTR', 'VCR']) if kpi in available_kpis]
+    if not default_kpis:
+        default_kpis = ['CTR', 'VCR'] if 'CTR' in available_kpis else available_kpis[:2]
+
+    selected_kpis = st.multiselect(
+        "Select KPIs to display:",
+        options=available_kpis,
+        default=default_kpis,
+        help="Choose which Key Performance Indicators to show",
+        key="kpi_multiselect"
+    )
+
+    if selected_kpis != st.session_state.kpi_settings.get('selected_kpis', []):
+        st.session_state.kpi_settings['selected_kpis'] = selected_kpis
+
+    if selected_kpis:
+        create_kpi_cards(metrics, selected_kpis)
+    else:
+        st.info("Please select at least one KPI to display")
+
+    # Side-by-side charts
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        create_device_chart(df_clean)
+
+    with col2:
+        st.markdown("**📈 Daily Performance Trend**")
+
+        # Compact controls in a row
+        trend_col1, trend_col2 = st.columns(2)
+        with trend_col1:
+            trend_kpi_options = ['Impressions', 'Clicks', 'CTR']
+            if metrics['cost'] > 0:
+                trend_kpi_options.extend(['CPC'])
+            if metrics['conversions'] > 0:
+                trend_kpi_options.extend(['CPA'])
+            if metrics['starts'] > 0:
+                trend_kpi_options.extend(['VCR'])
+
+            saved_trend_kpi = st.session_state.kpi_settings.get('trend_kpi', 'Impressions')
+            trend_index = trend_kpi_options.index(saved_trend_kpi) if saved_trend_kpi in trend_kpi_options else 0
+
+            selected_trend_kpi = st.selectbox(
+                "Select KPI for trend:",
+                options=trend_kpi_options,
+                index=trend_index,
+                help="Choose which metric to show",
+                key="trend_kpi_selectbox"
+            )
+
+            if selected_trend_kpi != st.session_state.kpi_settings.get('trend_kpi'):
+                st.session_state.kpi_settings['trend_kpi'] = selected_trend_kpi
+
+        with trend_col2:
+            days_back = st.number_input(
+                "Days to show:",
+                min_value=1,
+                max_value=365,
+                value=14,
+                step=1,
+                help="Number of days to include"
+            )
+
+        create_enhanced_daily_trend(df_clean, selected_trend_kpi, days_back)
+
+    create_inventory_chart(df_clean)
+
+    # Add the new inventory app ranking section
+    create_inventory_app_ranking(df_clean)
+
+    with st.expander("Raw Data Preview (Cleaned)"):
+        st.caption(f"Showing first 100 rows of {len(df_clean)} valid rows")
+        st.dataframe(df_clean.head(100), use_container_width=True)
+
+    # Looker Studio Embed Section
+    st.divider()
+    st.subheader("📊 Looker Studio Reports")
+
+    looker_config = get_looker_config()
+
+    if looker_config:
+        # If current campaign has a Looker URL configured
+        if campaign_name in looker_config:
+            looker_url = looker_config[campaign_name]
+            st.info(f"Showing Looker Studio report for: {campaign_name}")
+            render_looker_embed(looker_url)
+        else:
+            # Show dropdown to select from available reports
+            if looker_config:
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    selected_report = st.selectbox(
+                        "Select a Looker Studio report:",
+                        list(looker_config.keys())
+                    )
+                with col2:
+                    st.write("")  # Spacing
+
+                if selected_report:
+                    render_looker_embed(looker_config[selected_report])
+    else:
+        with st.expander("Configure Looker Studio Reports"):
+            st.write("Add Looker Studio embed URLs to your Streamlit secrets:")
+            st.code("""
+[LOOKER_URLS]
+"Campaign Name 1" = "https://lookerstudio.google.com/embed/reporting/your-report-id/page/pageId"
+"Campaign Name 2" = "https://lookerstudio.google.com/embed/reporting/another-report-id/page/pageId"
+            """, language="toml")
+
+            st.write("**Or configure dynamically:**")
+
+            # Dynamic configuration
+            if 'looker_urls' not in st.session_state:
+                st.session_state.looker_urls = {}
+
+            new_campaign_name = st.text_input("Campaign Name")
+            new_looker_url = st.text_input("Looker Studio Embed URL")
+
+            if st.button("Add Looker URL") and new_campaign_name and new_looker_url:
+                st.session_state.looker_urls[new_campaign_name] = new_looker_url
+                st.success(f"Added Looker URL for {new_campaign_name}")
+                st.rerun()
+
+            if st.session_state.looker_urls:
+                st.write("**Currently configured URLs:**")
+                for name, url in st.session_state.looker_urls.items():
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        st.text(f"{name}: {url[:50]}...")
+                    with col2:
+                        if st.button("Remove", key=f"remove_{name}"):
+                            del st.session_state.looker_urls[name]
+                            st.rerun()
+
+
+def main():
     # Configure GitHub for inventory source mappings
     github_config = get_github_config()
     if all(github_config.values()):
         set_github_config(github_config)
 
     # Initialize session state
+    if 'current_view' not in st.session_state:
+        st.session_state.current_view = "home"
+    if 'selected_campaign' not in st.session_state:
+        st.session_state.selected_campaign = None
     if 'current_campaign' not in st.session_state:
         st.session_state.current_campaign = None
     if 'current_df' not in st.session_state:
@@ -1758,473 +2236,13 @@ def main():
             'selected_kpis': ['CTR', 'VCR'],
             'trend_kpi': 'Impressions'
         }
-    
-    # Campaign Management Section
-    st.subheader("📁 Campaign Management")
-    
-    # Show GitHub configuration status
-    config = get_github_config()
-    if all(config.values()):
-        st.success("✅ GitHub storage configured")
-        
-        # Add debugging info
-        with st.expander("🔧 Debug GitHub Connection", expanded=False):
-            st.write(f"**Repository:** {config['owner']}/{config['repo']}")
-            st.write(f"**Token:** {'✅ Present' if config['token'] else '❌ Missing'}")
-            
-            # Test GitHub API connection
-            test_url = f"{GITHUB_API_BASE}/repos/{config['owner']}/{config['repo']}"
-            test_result, test_error = github_api_request('GET', test_url)
-            
-            if test_error:
-                st.error(f"❌ GitHub API Connection Failed: {test_error}")
-            else:
-                st.success("✅ GitHub API Connection Successful")
-                
-            # Test campaigns folder access
-            campaigns_url = f"{GITHUB_API_BASE}/repos/{config['owner']}/{config['repo']}/contents/{CAMPAIGNS_PATH}"
-            campaigns_result, campaigns_error = github_api_request('GET', campaigns_url)
-            
-            if campaigns_error:
-                st.error(f"❌ Campaigns folder access failed: {campaigns_error}")
-                if "404" in str(campaigns_error):
-                    st.info("The saved_campaigns folder may not exist or may be empty")
-            else:
-                st.success(f"✅ Campaigns folder accessible ({len(campaigns_result) if isinstance(campaigns_result, list) else 0} items found)")
-                if isinstance(campaigns_result, list):
-                    for item in campaigns_result:
-                        st.write(f"- {item.get('name', 'Unknown')} ({item.get('type', 'Unknown type')})")
-    else:
-        st.warning("⚠️ GitHub storage not configured - campaigns will not persist. Please add GITHUB_TOKEN, GITHUB_OWNER, and GITHUB_REPO to Streamlit secrets.")
-    
-    col1, col2, col3 = st.columns([2, 2, 1])
-    
-    with col1:
-        st.write("**Load Saved Campaign**")
-        saved_campaigns = get_saved_campaigns()
-        
-        if saved_campaigns:
-            selected_campaign = st.selectbox(
-                "Select Campaign:",
-                [""] + saved_campaigns,
-                help="Choose a saved campaign to load"
-            )
-            
-            if selected_campaign:
-                col_load, col_delete = st.columns(2)
-                with col_load:
-                    if st.button("Load Campaign"):
-                        campaign_data = load_campaign_data(selected_campaign)
-                        if campaign_data and 'dataframe' in campaign_data:
-                            st.session_state.current_df = campaign_data['dataframe']
-                            st.session_state.current_dsp = campaign_data['dsp']
-                            st.session_state.current_campaign = selected_campaign
-                            
-                            # Restore KPI settings if available
-                            if 'kpi_settings' in campaign_data and campaign_data['kpi_settings']:
-                                st.session_state.kpi_settings.update(campaign_data['kpi_settings'])
-                            
-                            st.success(f"Loaded campaign: {selected_campaign}")
-                            st.rerun()
-                        else:
-                            st.error("Failed to load campaign data. Please check the file format.")
-                
-                with col_delete:
-                    if st.button("🗑️ Delete", help="Delete this saved campaign"):
-                        if delete_campaign_data(selected_campaign):
-                            st.success(f"Deleted campaign: {selected_campaign}")
-                            st.rerun()
-                        else:
-                            st.error("Failed to delete campaign")
-        else:
-            st.info("No saved campaigns found. Save your first campaign to get started!")
-    
-    with col2:
-        if st.session_state.current_campaign:
-            st.write("**Override Campaign Data**")
-            st.caption(f"Update data for: {st.session_state.current_campaign}")
-            dsp = st.session_state.current_dsp
-            st.info(f"DSP: {dsp}")
 
-            data_source_tab1, data_source_tab2 = st.tabs(["📤 Upload CSV", "☁️ BigQuery"])
+    # Route to appropriate page
+    if st.session_state.current_view == "home":
+        show_home_page()
+    elif st.session_state.current_view == "campaign":
+        show_campaign_overview()
 
-            uploaded_file = None
-            bigquery_data = None
-
-            with data_source_tab1:
-                uploaded_file = st.file_uploader(
-                    "Upload new data to replace current campaign:",
-                    type=['csv'],
-                    help="Upload new CSV data to override the current campaign while keeping the same name and settings",
-                    key="override_csv_upload"
-                )
-
-            with data_source_tab2:
-                bq_config = get_bigquery_config()
-                if all(bq_config.values()):
-                    if st.button("Load from BigQuery", key="override_bq_load"):
-                        with st.spinner("Querying BigQuery..."):
-                            bigquery_data = query_campaign_data(
-                                bq_config['project_id'],
-                                bq_config['dataset_id'],
-                                bq_config['table_id'],
-                                campaign_filter=st.session_state.current_campaign
-                            )
-                            if bigquery_data is not None:
-                                st.success(f"Loaded {len(bigquery_data)} rows from BigQuery")
-                else:
-                    st.info("Configure BigQuery in Streamlit secrets to use this feature")
-        else:
-            st.write("**Upload New Data**")
-
-            data_source_tab1, data_source_tab2 = st.tabs(["📤 Upload CSV", "☁️ BigQuery"])
-
-            uploaded_file = None
-            bigquery_data = None
-            dsp = None
-
-            with data_source_tab1:
-                dsp = st.selectbox("Select DSP", ["DV360"], key="csv_dsp_select")
-                uploaded_file = st.file_uploader(
-                    "Drag and drop your CSV file here",
-                    type=['csv'],
-                    help="Upload your campaign performance data in CSV format",
-                    key="new_csv_upload"
-                )
-
-            with data_source_tab2:
-                bq_config = get_bigquery_config()
-
-                if all(bq_config.values()):
-                    st.info(f"Project: {bq_config['project_id']}")
-                    st.info(f"Dataset: {bq_config['dataset_id']}")
-
-                    # Get available campaigns (tables in the dataset)
-                    campaigns_list = get_available_campaigns(
-                        bq_config['project_id'],
-                        bq_config['dataset_id']
-                    )
-
-                    if campaigns_list:
-                        selected_bq_campaign = st.selectbox(
-                            "Select Campaign (Table):",
-                            campaigns_list,
-                            key="bq_campaign_select",
-                            help="Each table represents a separate campaign"
-                        )
-
-                        if st.button("Load Campaign from BigQuery"):
-                            with st.spinner("Querying BigQuery..."):
-                                # Use the selected campaign as the table_id
-                                bigquery_data = query_campaign_data(
-                                    bq_config['project_id'],
-                                    bq_config['dataset_id'],
-                                    selected_bq_campaign
-                                )
-                                if bigquery_data is not None:
-                                    st.success(f"Loaded {len(bigquery_data)} rows from BigQuery")
-                                    dsp = "DV360"
-                    else:
-                        st.warning("Could not fetch campaigns from BigQuery")
-                else:
-                    st.info("Configure BigQuery credentials in Streamlit secrets:")
-                    st.code("""
-[BIGQUERY]
-BIGQUERY_PROJECT_ID = "your-project-id"
-BIGQUERY_DATASET_ID = "your-dataset-id"
-                    """, language="toml")
-    
-    with col3:
-        st.write("**Current Campaign**")
-        if st.session_state.current_campaign:
-            st.info(f"📊 {st.session_state.current_campaign}")
-            if st.button("Clear Campaign"):
-                st.session_state.current_campaign = None
-                st.session_state.current_df = None
-                st.rerun()
-        else:
-            st.info("No campaign loaded")
-    
-    # Data processing
-    df = None
-
-    # Check if we should use uploaded file, BigQuery data, or session state
-    if uploaded_file is not None:
-        try:
-            # Clean the CSV before loading
-            cleaned_csv = clean_csv_before_loading(uploaded_file)
-            df = pd.read_csv(cleaned_csv)
-            st.session_state.current_df = df
-            st.session_state.current_dsp = dsp
-            st.success(f"Successfully loaded {len(df)} rows of data from {dsp}")
-        except Exception as e:
-            st.error(f"Error loading file: {str(e)}")
-    elif bigquery_data is not None:
-        try:
-            df = bigquery_data
-            st.session_state.current_df = df
-            st.session_state.current_dsp = dsp if dsp else "DV360"
-            st.success(f"Successfully loaded {len(df)} rows from BigQuery")
-        except Exception as e:
-            st.error(f"Error processing BigQuery data: {str(e)}")
-    elif st.session_state.current_df is not None:
-        df = st.session_state.current_df
-        dsp = st.session_state.current_dsp
-    
-    if df is not None:
-        # Show inventory source mapping manager
-        # Auto-expand if there are unmapped sources
-        all_mappings = get_all_inventory_source_mappings()
-        if 'Inventory Source' in df.columns:
-            unique_sources = df['Inventory Source'].unique()
-            has_unmapped = any(
-                pd.notna(source) and source not in all_mappings
-                for source in unique_sources
-            )
-        else:
-            has_unmapped = False
-
-        with st.expander("🗂️ Manage Inventory Source Mappings", expanded=has_unmapped):
-            st.caption("Map inventory sources to Xandr Deal IDs for automatic lookup")
-            show_inventory_source_mapping_manager(df)
-
-        # Add save campaign section for new uploads or overrides
-        if uploaded_file is not None:
-            if st.session_state.current_campaign:
-                # Override existing campaign
-                st.subheader("🔄 Override Campaign Data")
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    st.write(f"**Campaign Name:** {st.session_state.current_campaign}")
-                    st.caption("New data will replace existing data but keep the same name and KPI settings")
-                
-                with col2:
-                    if st.button("Save Override", help="Replace campaign data while keeping name and settings"):
-                        try:
-                            # Capture current KPI settings
-                            current_kpi_settings = st.session_state.get('kpi_settings', {})
-                            
-                            result_message = save_campaign_data(df, st.session_state.current_campaign, dsp, current_kpi_settings)
-                            
-                            if "Error" in result_message:
-                                st.error(result_message)
-                            else:
-                                st.success(f"✅ Updated campaign: {st.session_state.current_campaign}")
-                        except Exception as e:
-                            st.error(f"Error updating campaign: {str(e)}")
-            else:
-                # Save new campaign
-                st.subheader("💾 Save Campaign")
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    campaign_name = st.text_input(
-                        "Campaign Name:",
-                        placeholder="Enter a name for this campaign",
-                        help="Enter a descriptive name to save this campaign data"
-                    )
-                
-                with col2:
-                    if campaign_name and st.button("Save Campaign"):
-                        try:
-                            # Capture current KPI settings
-                            current_kpi_settings = st.session_state.get('kpi_settings', {})
-                            
-                            result_message = save_campaign_data(df, campaign_name, dsp, current_kpi_settings)
-                            st.session_state.current_campaign = campaign_name
-                            
-                            if "Error" in result_message:
-                                st.error(result_message)
-                            else:
-                                st.success(result_message)
-                        except Exception as e:
-                            st.error(f"Error saving campaign: {str(e)}")
-        
-        # Calculate metrics with validation
-        metrics = calculate_metrics(df)
-        
-        # Display validation messages
-        if metrics['validation_messages']:
-            with st.expander("🔍 Data Validation Report", expanded=True):
-                for message in metrics['validation_messages']:
-                    if "⚠️" in message:
-                        st.warning(message)
-                    elif "✅" in message:
-                        st.success(message)
-                    else:
-                        st.info(message)
-        
-        # Use cleaned dataframe for visualizations
-        df_clean = metrics['cleaned_df']
-
-        # Inject Looker-style CSS
-        inject_looker_style_css()
-
-        st.subheader("Overview")
-        create_overview_cards(metrics)
-        
-        st.subheader("Key Performance Indicators")
-
-        # KPI selection - more compact
-        available_kpis = ['CTR', 'VCR']
-        if metrics['cost'] > 0:
-            available_kpis.extend(['CPC'])
-        if metrics['conversions'] > 0:
-            available_kpis.extend(['CPA'])
-
-        default_kpis = [kpi for kpi in st.session_state.kpi_settings.get('selected_kpis', ['CTR', 'VCR']) if kpi in available_kpis]
-        if not default_kpis:
-            default_kpis = ['CTR', 'VCR'] if 'CTR' in available_kpis else available_kpis[:2]
-
-        selected_kpis = st.multiselect(
-            "Select KPIs to display:",
-            options=available_kpis,
-            default=default_kpis,
-            help="Choose which Key Performance Indicators to show",
-            key="kpi_multiselect"
-        )
-
-        if selected_kpis != st.session_state.kpi_settings.get('selected_kpis', []):
-            st.session_state.kpi_settings['selected_kpis'] = selected_kpis
-
-        if selected_kpis:
-            create_kpi_cards(metrics, selected_kpis)
-        else:
-            st.info("Please select at least one KPI to display")
-
-        # Side-by-side charts (Device Pie + Daily Trend)
-        col1, col2 = st.columns([1, 2])  # Device chart narrower, trend wider
-
-        with col1:
-            create_device_chart(df_clean)
-
-        with col2:
-            st.markdown("**📈 Daily Performance Trend**")
-            
-            # Compact controls in a row
-            trend_col1, trend_col2 = st.columns(2)
-            with trend_col1:
-                trend_kpi_options = ['Impressions', 'Clicks', 'CTR']
-                if metrics['cost'] > 0:
-                    trend_kpi_options.extend(['CPC'])
-                if metrics['conversions'] > 0:
-                    trend_kpi_options.extend(['CPA'])
-                if metrics['starts'] > 0:
-                    trend_kpi_options.extend(['VCR'])
-
-                saved_trend_kpi = st.session_state.kpi_settings.get('trend_kpi', 'Impressions')
-                trend_index = trend_kpi_options.index(saved_trend_kpi) if saved_trend_kpi in trend_kpi_options else 0
-
-                selected_trend_kpi = st.selectbox(
-                    "Select KPI for trend:",
-                    options=trend_kpi_options,
-                    index=trend_index,
-                    help="Choose which metric to show",
-                    key="trend_kpi_selectbox"
-                )
-
-                if selected_trend_kpi != st.session_state.kpi_settings.get('trend_kpi'):
-                    st.session_state.kpi_settings['trend_kpi'] = selected_trend_kpi
-
-            with trend_col2:
-                days_back = st.number_input(
-                    "Days to show:",
-                    min_value=1,
-                    max_value=365,
-                    value=14,
-                    step=1,
-                    help="Number of days to include"
-                )
-
-            create_enhanced_daily_trend(df_clean, selected_trend_kpi, days_back)
-        
-        create_inventory_chart(df_clean)
-        
-        # Add the new inventory app ranking section
-        create_inventory_app_ranking(df_clean)
-        
-        with st.expander("Raw Data Preview (Cleaned)"):
-            st.caption(f"Showing first 100 rows of {len(df_clean)} valid rows")
-            st.dataframe(df_clean.head(100), use_container_width=True)
-
-        # Looker Studio Embed Section
-        st.divider()
-        st.subheader("📊 Looker Studio Reports")
-
-        looker_config = get_looker_config()
-
-        if looker_config:
-            # If current campaign has a Looker URL configured
-            if st.session_state.current_campaign and st.session_state.current_campaign in looker_config:
-                looker_url = looker_config[st.session_state.current_campaign]
-                st.info(f"Showing Looker Studio report for: {st.session_state.current_campaign}")
-                render_looker_embed(looker_url)
-            else:
-                # Show dropdown to select from available reports
-                if looker_config:
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        selected_report = st.selectbox(
-                            "Select a Looker Studio report:",
-                            list(looker_config.keys())
-                        )
-                    with col2:
-                        st.write("")  # Spacing
-
-                    if selected_report:
-                        render_looker_embed(looker_config[selected_report])
-        else:
-            with st.expander("Configure Looker Studio Reports"):
-                st.write("Add Looker Studio embed URLs to your Streamlit secrets:")
-                st.code("""
-[LOOKER_URLS]
-"Campaign Name 1" = "https://lookerstudio.google.com/embed/reporting/your-report-id/page/pageId"
-"Campaign Name 2" = "https://lookerstudio.google.com/embed/reporting/another-report-id/page/pageId"
-                """, language="toml")
-
-                st.write("**Or configure dynamically:**")
-
-                # Dynamic configuration
-                if 'looker_urls' not in st.session_state:
-                    st.session_state.looker_urls = {}
-
-                new_campaign_name = st.text_input("Campaign Name")
-                new_looker_url = st.text_input("Looker Studio Embed URL")
-
-                if st.button("Add Looker URL") and new_campaign_name and new_looker_url:
-                    st.session_state.looker_urls[new_campaign_name] = new_looker_url
-                    st.success(f"Added Looker URL for {new_campaign_name}")
-                    st.rerun()
-
-                if st.session_state.looker_urls:
-                    st.write("**Currently configured URLs:**")
-                    for name, url in st.session_state.looker_urls.items():
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.text(f"{name}: {url[:50]}...")
-                        with col2:
-                            if st.button("Remove", key=f"remove_{name}"):
-                                del st.session_state.looker_urls[name]
-                                st.rerun()
-
-    else:
-        st.info("Please upload a CSV file to view the dashboard")
-        
-        st.subheader("Expected Data Format")
-        st.write("Your CSV should contain columns such as:")
-        st.code("""
-Date, Insertion Order, Line Item, Inventory Source, Device Type,
-Impressions, Clicks, Starts (Video), Complete Views (Video), etc.
-        """)
-        
-        st.warning("""
-        ⚠️ Note: This dashboard automatically validates and cleans your data by:
-        - Removing rows with corrupted date fields
-        - Filtering out rows with unrealistic values (>10M impressions)
-        - Removing rows where clicks exceed impressions
-        - Removing rows where video completes exceed starts
-        """)
 
 if __name__ == "__main__":
     main()
