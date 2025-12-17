@@ -1906,15 +1906,6 @@ def show_inventory_source_mapping_manager(df=None):
                             if st.form_submit_button("❌ Cancel", use_container_width=True):
                                 st.session_state[f'editing_{idx}'] = False
                                 st.rerun()
-
-            # Export option
-            st.divider()
-            st.download_button(
-                label="📥 Export Mappings as JSON",
-                data=json.dumps(all_mappings, indent=2),
-                file_name="inventory_source_mappings.json",
-                mime="application/json"
-            )
         else:
             st.info("No mappings configured yet. Upload a report and use the 'Map Unmapped Sources' tab to get started.")
 
