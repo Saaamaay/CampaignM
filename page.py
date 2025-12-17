@@ -10,6 +10,7 @@ import requests
 import base64
 import json
 import gzip
+from google.cloud import bigquery
 from inventory_list_manager import rotate_inventory_list
 from deal_inventory_lookup import get_inventory_list_summary_for_deal
 from deal_lineitem_cache import (
@@ -30,60 +31,93 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Campaign Manager Dashboard", layout="wide")
 
-# Campaign metadata management with persistent storage
-CAMPAIGNS_FILE = "saved_campaigns/campaigns_metadata.json"
+# Campaign metadata management with BigQuery persistent storage
+METADATA_TABLE = "worktest-480719.dashboard_data.campaign_metadata"
 
-def load_campaigns_from_file():
-    """Load campaigns from JSON file"""
+def load_campaigns_from_bigquery():
+    """Load campaigns from BigQuery metadata table"""
     try:
-        if os.path.exists(CAMPAIGNS_FILE):
-            with open(CAMPAIGNS_FILE, 'r') as f:
-                return json.load(f)
-        return []
-    except Exception as e:
-        st.error(f"Error loading campaigns: {e}")
-        return []
+        client = get_bigquery_client()
+        query = f"""
+            SELECT name, bigquery_table, project_id, dataset_id, dsp, created_date
+            FROM `{METADATA_TABLE}`
+            ORDER BY created_date DESC
+        """
+        df = client.query(query).to_dataframe()
 
-def save_campaigns_to_file(campaigns):
-    """Save campaigns to JSON file"""
-    try:
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(CAMPAIGNS_FILE), exist_ok=True)
-        with open(CAMPAIGNS_FILE, 'w') as f:
-            json.dump(campaigns, f, indent=2)
-        return True
+        # Convert to list of dicts
+        campaigns = df.to_dict('records')
+
+        # Convert created_date to string if it's a timestamp
+        for campaign in campaigns:
+            if 'created_date' in campaign and hasattr(campaign['created_date'], 'strftime'):
+                campaign['created_date'] = campaign['created_date'].strftime("%Y-%m-%d %H:%M:%S")
+
+        return campaigns
     except Exception as e:
-        st.error(f"Error saving campaigns: {e}")
-        return False
+        st.error(f"Error loading campaigns from BigQuery: {e}")
+        return []
 
 def get_campaigns_metadata():
-    """Get list of campaign metadata from session state, loading from file if needed"""
+    """Get list of campaign metadata from session state, loading from BigQuery if needed"""
     if 'campaigns' not in st.session_state:
-        st.session_state.campaigns = load_campaigns_from_file()
+        st.session_state.campaigns = load_campaigns_from_bigquery()
     return st.session_state.campaigns
 
 def add_campaign_metadata(name, bigquery_table, project_id, dataset_id, dsp="DV360"):
-    """Add a new campaign metadata and save to file"""
-    if 'campaigns' not in st.session_state:
-        st.session_state.campaigns = load_campaigns_from_file()
+    """Add a new campaign metadata and save to BigQuery"""
+    try:
+        client = get_bigquery_client()
 
-    campaign = {
-        'name': name,
-        'bigquery_table': bigquery_table,
-        'project_id': project_id,
-        'dataset_id': dataset_id,
-        'dsp': dsp,
-        'created_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    st.session_state.campaigns.append(campaign)
-    return save_campaigns_to_file(st.session_state.campaigns)
+        # Insert into BigQuery
+        query = f"""
+            INSERT INTO `{METADATA_TABLE}` (name, bigquery_table, project_id, dataset_id, dsp, created_date)
+            VALUES (@name, @bigquery_table, @project_id, @dataset_id, @dsp, CURRENT_TIMESTAMP())
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("name", "STRING", name),
+                bigquery.ScalarQueryParameter("bigquery_table", "STRING", bigquery_table),
+                bigquery.ScalarQueryParameter("project_id", "STRING", project_id),
+                bigquery.ScalarQueryParameter("dataset_id", "STRING", dataset_id),
+                bigquery.ScalarQueryParameter("dsp", "STRING", dsp),
+            ]
+        )
+
+        client.query(query, job_config=job_config).result()
+
+        # Refresh session state
+        st.session_state.campaigns = load_campaigns_from_bigquery()
+        return True
+    except Exception as e:
+        st.error(f"Error adding campaign to BigQuery: {e}")
+        return False
 
 def delete_campaign_metadata(name):
-    """Delete a campaign by name and save to file"""
-    if 'campaigns' in st.session_state:
-        st.session_state.campaigns = [c for c in st.session_state.campaigns if c['name'] != name]
-        return save_campaigns_to_file(st.session_state.campaigns)
-    return False
+    """Delete a campaign by name from BigQuery"""
+    try:
+        client = get_bigquery_client()
+
+        query = f"""
+            DELETE FROM `{METADATA_TABLE}`
+            WHERE name = @name
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("name", "STRING", name),
+            ]
+        )
+
+        client.query(query, job_config=job_config).result()
+
+        # Refresh session state
+        st.session_state.campaigns = load_campaigns_from_bigquery()
+        return True
+    except Exception as e:
+        st.error(f"Error deleting campaign from BigQuery: {e}")
+        return False
 
 def get_campaign_by_name(name):
     """Get campaign metadata by name"""
@@ -92,6 +126,42 @@ def get_campaign_by_name(name):
         if campaign['name'] == name:
             return campaign
     return None
+
+def sync_campaigns_to_bigquery(campaigns_list, replace=False):
+    """Sync a list of campaigns to BigQuery"""
+    try:
+        client = get_bigquery_client()
+
+        if replace:
+            # Delete all existing campaigns
+            delete_query = f"DELETE FROM `{METADATA_TABLE}` WHERE TRUE"
+            client.query(delete_query).result()
+
+        # Insert campaigns
+        for campaign in campaigns_list:
+            query = f"""
+                INSERT INTO `{METADATA_TABLE}` (name, bigquery_table, project_id, dataset_id, dsp, created_date)
+                VALUES (@name, @bigquery_table, @project_id, @dataset_id, @dsp, CURRENT_TIMESTAMP())
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("name", "STRING", campaign.get('name')),
+                    bigquery.ScalarQueryParameter("bigquery_table", "STRING", campaign.get('bigquery_table')),
+                    bigquery.ScalarQueryParameter("project_id", "STRING", campaign.get('project_id')),
+                    bigquery.ScalarQueryParameter("dataset_id", "STRING", campaign.get('dataset_id')),
+                    bigquery.ScalarQueryParameter("dsp", "STRING", campaign.get('dsp', 'DV360')),
+                ]
+            )
+
+            client.query(query, job_config=job_config).result()
+
+        # Refresh session state
+        st.session_state.campaigns = load_campaigns_from_bigquery()
+        return True
+    except Exception as e:
+        st.error(f"Error syncing campaigns to BigQuery: {e}")
+        return False
 
 def inject_looker_style_css():
     """Inject custom CSS for Looker-style dashboard appearance"""
@@ -1979,17 +2049,21 @@ def show_home_page():
 
                         if st.button("🔄 Import Campaigns", type="primary"):
                             if import_option == "Replace (delete existing)":
-                                st.session_state.campaigns = imported_campaigns
+                                # Replace all campaigns in BigQuery
+                                if sync_campaigns_to_bigquery(imported_campaigns, replace=True):
+                                    st.success(f"✅ Successfully replaced all campaigns!")
+                                    st.rerun()
                             else:
                                 # Merge - avoid duplicates by name
                                 existing_names = {c['name'] for c in campaigns}
                                 new_campaigns = [c for c in imported_campaigns if c['name'] not in existing_names]
-                                st.session_state.campaigns.extend(new_campaigns)
 
-                            # Save to file
-                            save_campaigns_to_file(st.session_state.campaigns)
-                            st.success(f"✅ Successfully imported campaigns!")
-                            st.rerun()
+                                if new_campaigns:
+                                    if sync_campaigns_to_bigquery(new_campaigns, replace=False):
+                                        st.success(f"✅ Successfully imported {len(new_campaigns)} new campaigns!")
+                                        st.rerun()
+                                else:
+                                    st.info("No new campaigns to import (all already exist)")
                     else:
                         st.error("Invalid JSON format. Expected a list of campaigns.")
                 except json.JSONDecodeError:
