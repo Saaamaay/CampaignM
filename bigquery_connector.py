@@ -100,6 +100,7 @@ def query_campaign_data(
             Date,
             '{table_id}' as Campaign,
             Device_Type as Device,
+            Creative_Size,
             Impressions,
             Clicks,
             Total_Conversions as Conversions,
@@ -128,7 +129,8 @@ def query_campaign_data(
         column_mapping = {
             'App_URL': 'App/URL',
             'Inventory_Source': 'Inventory Source',
-            'Device': 'Device Type'
+            'Device': 'Device Type',
+            'Creative_Size': 'Creative Size'
         }
         df.rename(columns=column_mapping, inplace=True)
 
