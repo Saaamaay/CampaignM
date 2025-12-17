@@ -1910,45 +1910,6 @@ def show_inventory_source_mapping_manager(df=None):
             st.info("No mappings configured yet. Upload a report and use the 'Map Unmapped Sources' tab to get started.")
 
 
-def render_looker_embed(looker_url: str, height: int = 800):
-    """
-    Render a Looker Studio report embed.
-
-    Args:
-        looker_url: The Looker Studio embed URL
-        height: Height of the iframe in pixels (default 800)
-    """
-    if not looker_url:
-        st.warning("No Looker Studio URL configured")
-        return
-
-    # Add a button to open in new tab as fallback for cookie issues
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        st.link_button("📊 Open in New Tab", looker_url, use_container_width=True)
-
-    with col1:
-        st.caption("If the report doesn't load below, click 'Open in New Tab' or enable third-party cookies in your browser")
-
-    iframe_html = f"""
-    <iframe
-        width="100%"
-        height="{height}"
-        src="{looker_url}"
-        frameborder="0"
-        style="border:0"
-        allowfullscreen
-        allow="storage-access">
-    </iframe>
-    """
-
-    try:
-        components.html(iframe_html, height=height)
-    except Exception as e:
-        st.error(f"Failed to load Looker Studio embed: {str(e)}")
-        st.info(f"Open the report directly: {looker_url}")
-
-
 def get_bigquery_config():
     """Get BigQuery configuration from Streamlit secrets.
     Each table in the dataset represents a separate campaign."""
@@ -1959,23 +1920,6 @@ def get_bigquery_config():
         }
     except:
         return {'project_id': '', 'dataset_id': ''}
-
-
-def get_looker_config():
-    """Get Looker Studio configuration from Streamlit secrets or session state"""
-    try:
-        # Try to get from secrets first
-        looker_urls = {}
-        if hasattr(st, 'secrets') and 'LOOKER_URLS' in st.secrets:
-            looker_urls = dict(st.secrets['LOOKER_URLS'])
-
-        # Also check session state for user-added URLs
-        if 'looker_urls' in st.session_state:
-            looker_urls.update(st.session_state.looker_urls)
-
-        return looker_urls
-    except:
-        return {}
 
 
 def show_home_page():
@@ -2287,66 +2231,6 @@ def show_campaign_overview():
     with st.expander("Raw Data Preview (Cleaned)"):
         st.caption(f"Showing first 100 rows of {len(df_clean)} valid rows")
         st.dataframe(df_clean.head(100), use_container_width=True)
-
-    # Looker Studio Embed Section
-    st.divider()
-    st.subheader("📊 Looker Studio Reports")
-
-    looker_config = get_looker_config()
-
-    if looker_config:
-        # If current campaign has a Looker URL configured
-        if campaign_name in looker_config:
-            looker_url = looker_config[campaign_name]
-            st.info(f"Showing Looker Studio report for: {campaign_name}")
-            render_looker_embed(looker_url)
-        else:
-            # Show dropdown to select from available reports
-            if looker_config:
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    selected_report = st.selectbox(
-                        "Select a Looker Studio report:",
-                        list(looker_config.keys())
-                    )
-                with col2:
-                    st.write("")  # Spacing
-
-                if selected_report:
-                    render_looker_embed(looker_config[selected_report])
-    else:
-        with st.expander("Configure Looker Studio Reports"):
-            st.write("Add Looker Studio embed URLs to your Streamlit secrets:")
-            st.code("""
-[LOOKER_URLS]
-"Campaign Name 1" = "https://lookerstudio.google.com/embed/reporting/your-report-id/page/pageId"
-"Campaign Name 2" = "https://lookerstudio.google.com/embed/reporting/another-report-id/page/pageId"
-            """, language="toml")
-
-            st.write("**Or configure dynamically:**")
-
-            # Dynamic configuration
-            if 'looker_urls' not in st.session_state:
-                st.session_state.looker_urls = {}
-
-            new_campaign_name = st.text_input("Campaign Name")
-            new_looker_url = st.text_input("Looker Studio Embed URL")
-
-            if st.button("Add Looker URL") and new_campaign_name and new_looker_url:
-                st.session_state.looker_urls[new_campaign_name] = new_looker_url
-                st.success(f"Added Looker URL for {new_campaign_name}")
-                st.rerun()
-
-            if st.session_state.looker_urls:
-                st.write("**Currently configured URLs:**")
-                for name, url in st.session_state.looker_urls.items():
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.text(f"{name}: {url[:50]}...")
-                    with col2:
-                        if st.button("Remove", key=f"remove_{name}"):
-                            del st.session_state.looker_urls[name]
-                            st.rerun()
 
     # Campaign Management Section (at bottom)
     st.divider()
