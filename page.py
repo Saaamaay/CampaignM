@@ -30,17 +30,42 @@ import streamlit.components.v1 as components
 
 st.set_page_config(page_title="Campaign Manager Dashboard", layout="wide")
 
-# Campaign metadata management (simple, no data storage)
+# Campaign metadata management with persistent storage
+CAMPAIGNS_FILE = "saved_campaigns/campaigns_metadata.json"
+
+def load_campaigns_from_file():
+    """Load campaigns from JSON file"""
+    try:
+        if os.path.exists(CAMPAIGNS_FILE):
+            with open(CAMPAIGNS_FILE, 'r') as f:
+                return json.load(f)
+        return []
+    except Exception as e:
+        st.error(f"Error loading campaigns: {e}")
+        return []
+
+def save_campaigns_to_file(campaigns):
+    """Save campaigns to JSON file"""
+    try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(CAMPAIGNS_FILE), exist_ok=True)
+        with open(CAMPAIGNS_FILE, 'w') as f:
+            json.dump(campaigns, f, indent=2)
+        return True
+    except Exception as e:
+        st.error(f"Error saving campaigns: {e}")
+        return False
+
 def get_campaigns_metadata():
-    """Get list of campaign metadata from session state"""
+    """Get list of campaign metadata from session state, loading from file if needed"""
     if 'campaigns' not in st.session_state:
-        st.session_state.campaigns = []
+        st.session_state.campaigns = load_campaigns_from_file()
     return st.session_state.campaigns
 
 def add_campaign_metadata(name, bigquery_table, project_id, dataset_id, dsp="DV360"):
-    """Add a new campaign metadata"""
+    """Add a new campaign metadata and save to file"""
     if 'campaigns' not in st.session_state:
-        st.session_state.campaigns = []
+        st.session_state.campaigns = load_campaigns_from_file()
 
     campaign = {
         'name': name,
@@ -51,13 +76,13 @@ def add_campaign_metadata(name, bigquery_table, project_id, dataset_id, dsp="DV3
         'created_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
     st.session_state.campaigns.append(campaign)
-    return True
+    return save_campaigns_to_file(st.session_state.campaigns)
 
 def delete_campaign_metadata(name):
-    """Delete a campaign by name"""
+    """Delete a campaign by name and save to file"""
     if 'campaigns' in st.session_state:
         st.session_state.campaigns = [c for c in st.session_state.campaigns if c['name'] != name]
-        return True
+        return save_campaigns_to_file(st.session_state.campaigns)
     return False
 
 def get_campaign_by_name(name):
@@ -626,9 +651,9 @@ def create_overview_cards(metrics):
     with col2:
         st.metric("Total Clicks", f"{metrics['clicks']:,}")
     with col3:
-        st.metric("Video Starts", f"{metrics['starts']:,}")
+        st.metric("Media Spend", f"£{metrics['cost']:,.2f}")
     with col4:
-        st.metric("Video Completes", f"{metrics['completes']:,}")
+        st.metric("Conversions", f"{metrics['conversions']:,}")
 
 def create_kpi_cards(metrics, selected_kpis=None):
     """Create KPI cards with colored indicators like Looker"""
@@ -1559,30 +1584,118 @@ def create_line_item_performance_table(df_clean, metrics):
     display_df.columns = ['Line_Item', 'Total_Conversions', 'CPA']
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-def create_creative_size_chart(df_clean):
-    """Create creative size distribution donut chart"""
+def create_creative_size_chart(df_clean, kpi='Impressions', metrics=None):
+    """Create creative size distribution donut chart for selected KPI"""
     if 'Creative Size' not in df_clean.columns:
+        st.warning("Creative Size data not available")
         return
 
-    size_data = df_clean.groupby('Creative Size').agg({'Impressions': 'sum'}).reset_index()
-    size_data = size_data.sort_values('Impressions', ascending=False).head(5)
+    # Map KPI to column name and aggregation
+    kpi_column_map = {
+        'Impressions': 'Impressions',
+        'Clicks': 'Clicks',
+        'Media Spend': None,  # Will find dynamically
+        'Conversions': None,  # Will find dynamically
+        'Video Starts': 'Starts (Video)',
+        'Video Completes': 'Complete Views (Video)',
+        'CTR': None,  # Calculate
+        'VCR': None   # Calculate
+    }
+
+    # For calculated metrics or dynamic columns
+    if kpi == 'CTR':
+        # Calculate CTR for each creative size
+        size_data = df_clean.groupby('Creative Size').agg({
+            'Impressions': 'sum',
+            'Clicks': 'sum'
+        }).reset_index()
+        size_data['CTR'] = (size_data['Clicks'] / size_data['Impressions'] * 100).fillna(0)
+        value_column = 'CTR'
+        value_suffix = '%'
+    elif kpi == 'VCR':
+        # Calculate VCR for each creative size
+        if 'Starts (Video)' in df_clean.columns and 'Complete Views (Video)' in df_clean.columns:
+            size_data = df_clean.groupby('Creative Size').agg({
+                'Starts (Video)': 'sum',
+                'Complete Views (Video)': 'sum'
+            }).reset_index()
+            size_data['VCR'] = (size_data['Complete Views (Video)'] / size_data['Starts (Video)'] * 100).fillna(0)
+            value_column = 'VCR'
+            value_suffix = '%'
+        else:
+            st.warning("Video metrics not available")
+            return
+    elif kpi == 'Media Spend':
+        # Find cost column dynamically
+        cost_columns = ['Total Media Cost (Advertiser Currency)', 'Media Cost', 'Cost', 'Spend', 'Revenue (Partner Currency)']
+        cost_col = None
+        for col in cost_columns:
+            if col in df_clean.columns:
+                cost_col = col
+                break
+        if cost_col:
+            size_data = df_clean.groupby('Creative Size').agg({cost_col: 'sum'}).reset_index()
+            size_data.rename(columns={cost_col: 'Media Spend'}, inplace=True)
+            value_column = 'Media Spend'
+            value_suffix = ''
+        else:
+            st.warning("Cost data not available")
+            return
+    elif kpi == 'Conversions':
+        # Find conversion column dynamically
+        conversion_columns = ['Total Conversions', 'Conversions', 'Post-Click Conversions', 'Post-View Conversions']
+        conv_col = None
+        for col in conversion_columns:
+            if col in df_clean.columns:
+                conv_col = col
+                break
+        if conv_col:
+            size_data = df_clean.groupby('Creative Size').agg({conv_col: 'sum'}).reset_index()
+            size_data.rename(columns={conv_col: 'Conversions'}, inplace=True)
+            value_column = 'Conversions'
+            value_suffix = ''
+        else:
+            st.warning("Conversion data not available")
+            return
+    else:
+        # Standard metrics
+        column_name = kpi_column_map.get(kpi, kpi)
+        if column_name not in df_clean.columns:
+            st.warning(f"{kpi} data not available")
+            return
+        size_data = df_clean.groupby('Creative Size').agg({column_name: 'sum'}).reset_index()
+        value_column = column_name
+        value_suffix = ''
+
+    # Sort and get top 5
+    size_data = size_data.sort_values(value_column, ascending=False).head(5)
 
     colors = ['#4285f4', '#f4b400', '#9c27b0', '#34a853', '#ea4335']
 
+    # Format hover template based on KPI type
+    if kpi in ['Media Spend']:
+        hover_template = '<b>%{label}</b><br>' + kpi + '=£%{value:,.2f}<extra></extra>'
+    elif kpi in ['CTR', 'VCR']:
+        hover_template = '<b>%{label}</b><br>' + kpi + '=%{value:.2f}%<extra></extra>'
+    else:
+        hover_template = '<b>%{label}</b><br>' + kpi + '=%{value:,.0f}<extra></extra>'
+
     fig = go.Figure(data=[go.Pie(
         labels=size_data['Creative Size'],
-        values=size_data['Impressions'],
+        values=size_data[value_column],
         hole=0.5,
         textinfo='percent',
         textposition='outside',
-        marker=dict(colors=colors, line=dict(color='#ffffff', width=2))
+        marker=dict(colors=colors, line=dict(color='#ffffff', width=2)),
+        hovertemplate=hover_template
     )])
 
     fig.update_layout(
+        title=f"{kpi} by Creative Size (Top 5)",
         showlegend=True,
         legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
-        margin=dict(l=10, r=100, t=30, b=10),
-        height=220
+        margin=dict(l=10, r=100, t=50, b=10),
+        height=400
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -1682,9 +1795,9 @@ def show_inventory_source_mapping_manager(df=None):
                 for source, deal_id in sorted(all_mappings.items())
             ])
 
-            # Show as editable table with delete option
+            # Show as editable table with edit and delete options
             for idx, row in mapping_df.iterrows():
-                col1, col2, col3 = st.columns([3, 1, 1])
+                col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
 
                 with col1:
                     st.text(row['Inventory Source'])
@@ -1693,10 +1806,36 @@ def show_inventory_source_mapping_manager(df=None):
                     st.text(f"Deal ID: {row['Deal ID']}")
 
                 with col3:
+                    if st.button("✏️ Edit", key=f"edit_{idx}"):
+                        st.session_state[f'editing_{idx}'] = True
+                        st.rerun()
+
+                with col4:
                     if st.button("🗑️ Delete", key=f"delete_{idx}"):
                         if remove_inventory_source_mapping(row['Inventory Source']):
                             st.success(f"Removed mapping for '{row['Inventory Source']}'")
                             st.rerun()
+
+                # Show edit dialog if editing this row
+                if st.session_state.get(f'editing_{idx}', False):
+                    with st.form(key=f"edit_form_{idx}"):
+                        st.write(f"**Editing:** {row['Inventory Source']}")
+                        new_deal_id = st.text_input("New Deal ID:", value=row['Deal ID'], key=f"new_deal_id_{idx}")
+
+                        col_save, col_cancel = st.columns(2)
+                        with col_save:
+                            if st.form_submit_button("💾 Save", use_container_width=True):
+                                # Remove old mapping and add new one
+                                remove_inventory_source_mapping(row['Inventory Source'])
+                                add_inventory_source_mapping(row['Inventory Source'], new_deal_id)
+                                st.session_state[f'editing_{idx}'] = False
+                                st.success(f"Updated mapping for '{row['Inventory Source']}'")
+                                st.rerun()
+
+                        with col_cancel:
+                            if st.form_submit_button("❌ Cancel", use_container_width=True):
+                                st.session_state[f'editing_{idx}'] = False
+                                st.rerun()
 
             # Export option
             st.divider()
@@ -1797,6 +1936,66 @@ def show_home_page():
         st.metric("Data Source", "BigQuery" if all(bq_config.values()) else "Not Configured")
 
     st.divider()
+
+    # Export/Import campaigns section
+    with st.expander("💾 Export/Import Campaign Configurations", expanded=False):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("**Export Campaigns**")
+            if campaigns:
+                campaigns_json = json.dumps(campaigns, indent=2)
+                st.download_button(
+                    label="📥 Download All Campaigns as JSON",
+                    data=campaigns_json,
+                    file_name=f"campaigns_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                    use_container_width=True
+                )
+            else:
+                st.info("No campaigns to export")
+
+        with col2:
+            st.markdown("**Import Campaigns**")
+            uploaded_file = st.file_uploader(
+                "Upload campaign configuration JSON:",
+                type=['json'],
+                key="campaign_import_file",
+                help="Import previously exported campaign configurations"
+            )
+
+            if uploaded_file is not None:
+                try:
+                    imported_campaigns = json.load(uploaded_file)
+
+                    if isinstance(imported_campaigns, list):
+                        st.info(f"Found {len(imported_campaigns)} campaigns in file")
+
+                        import_option = st.radio(
+                            "Import method:",
+                            ["Merge (keep existing, add new)", "Replace (delete existing)"],
+                            key="import_method"
+                        )
+
+                        if st.button("🔄 Import Campaigns", type="primary"):
+                            if import_option == "Replace (delete existing)":
+                                st.session_state.campaigns = imported_campaigns
+                            else:
+                                # Merge - avoid duplicates by name
+                                existing_names = {c['name'] for c in campaigns}
+                                new_campaigns = [c for c in imported_campaigns if c['name'] not in existing_names]
+                                st.session_state.campaigns.extend(new_campaigns)
+
+                            # Save to file
+                            save_campaigns_to_file(st.session_state.campaigns)
+                            st.success(f"✅ Successfully imported campaigns!")
+                            st.rerun()
+                    else:
+                        st.error("Invalid JSON format. Expected a list of campaigns.")
+                except json.JSONDecodeError:
+                    st.error("Invalid JSON file")
+                except Exception as e:
+                    st.error(f"Error importing campaigns: {e}")
 
     # Add new campaign section
     with st.expander("➕ Add New Campaign", expanded=False):
@@ -1954,32 +2153,14 @@ def show_campaign_overview():
 
     st.subheader("Key Performance Indicators")
 
-    # KPI selection
+    # Show all available KPIs
     available_kpis = ['CTR', 'VCR']
     if metrics['cost'] > 0:
         available_kpis.extend(['CPC'])
     if metrics['conversions'] > 0:
         available_kpis.extend(['CPA'])
 
-    default_kpis = [kpi for kpi in st.session_state.kpi_settings.get('selected_kpis', ['CTR', 'VCR']) if kpi in available_kpis]
-    if not default_kpis:
-        default_kpis = ['CTR', 'VCR'] if 'CTR' in available_kpis else available_kpis[:2]
-
-    selected_kpis = st.multiselect(
-        "Select KPIs to display:",
-        options=available_kpis,
-        default=default_kpis,
-        help="Choose which Key Performance Indicators to show",
-        key="kpi_multiselect"
-    )
-
-    if selected_kpis != st.session_state.kpi_settings.get('selected_kpis', []):
-        st.session_state.kpi_settings['selected_kpis'] = selected_kpis
-
-    if selected_kpis:
-        create_kpi_cards(metrics, selected_kpis)
-    else:
-        st.info("Please select at least one KPI to display")
+    create_kpi_cards(metrics, available_kpis)
 
     # Side-by-side charts
     col1, col2 = st.columns([1, 2])
@@ -2115,6 +2296,37 @@ def show_campaign_overview():
     with col4:
         if st.button("🔄", help="Refresh data from BigQuery", use_container_width=True):
             st.rerun()
+
+    # Main KPI selector for Creative Size analysis
+    st.markdown("### 📊 Creative Size Analysis")
+
+    # Available KPIs for creative size breakdown
+    kpi_options = ['Impressions', 'Clicks', 'CTR']
+    if metrics['cost'] > 0:
+        kpi_options.append('Media Spend')
+    if metrics['conversions'] > 0:
+        kpi_options.append('Conversions')
+    if metrics['starts'] > 0:
+        kpi_options.extend(['Video Starts', 'Video Completes', 'VCR'])
+
+    # Get saved KPI or default to Impressions
+    saved_creative_kpi = st.session_state.get('creative_size_kpi', 'Impressions')
+    creative_kpi_index = kpi_options.index(saved_creative_kpi) if saved_creative_kpi in kpi_options else 0
+
+    selected_creative_kpi = st.selectbox(
+        "Select Main KPI for Creative Size breakdown:",
+        options=kpi_options,
+        index=creative_kpi_index,
+        help="Choose which metric to analyze by Creative Size",
+        key="creative_size_kpi_selector"
+    )
+
+    # Save the selection
+    if selected_creative_kpi != st.session_state.get('creative_size_kpi'):
+        st.session_state['creative_size_kpi'] = selected_creative_kpi
+
+    # Display the creative size chart with selected KPI
+    create_creative_size_chart(df_clean, selected_creative_kpi, metrics)
 
     # Inventory source mapping manager
     all_mappings = get_all_inventory_source_mappings()
