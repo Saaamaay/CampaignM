@@ -11,6 +11,7 @@ import base64
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Callable
+from google.cloud import bigquery
 
 from xandr_auth import get_auth_token
 
@@ -19,6 +20,7 @@ XANDR_API_BASE = "https://api.appnexus.com"
 GITHUB_API_BASE = "https://api.github.com"
 CACHE_FILE = Path("deal_lineitem_cache.json")
 INVENTORY_MAPPING_FILE = "inventory_source_mappings.json"
+INVENTORY_MAPPING_TABLE = "worktest-480719.dashboard_data.inventory_source_mappings"
 CACHE_REFRESH_HOURS = 24  # Refresh cache if older than 24 hours
 
 
@@ -171,6 +173,124 @@ class DealLineItemCache:
         else:
             print(f"💾 Inventory mappings saved to GitHub ({mapping_data['mapping_count']} total)")
             return True
+
+    def _get_bigquery_client(self):
+        """Get BigQuery client."""
+        try:
+            from bigquery_connector import get_bigquery_client
+            return get_bigquery_client()
+        except Exception as e:
+            print(f"⚠️  Failed to get BigQuery client: {e}")
+            return None
+
+    def _load_inventory_mapping_from_bigquery(self) -> bool:
+        """
+        Load inventory source mapping from BigQuery.
+
+        Returns:
+            True if loaded successfully, False otherwise
+        """
+        try:
+            client = self._get_bigquery_client()
+            if not client:
+                return False
+
+            query = f"""
+                SELECT inventory_source, deal_id
+                FROM `{INVENTORY_MAPPING_TABLE}`
+                ORDER BY last_updated DESC
+            """
+
+            df = client.query(query).to_dataframe()
+
+            # Convert to dictionary
+            self._inventory_source_mapping = dict(zip(df['inventory_source'], df['deal_id']))
+
+            print(f"✅ Loaded {len(self._inventory_source_mapping)} inventory source mapping(s) from BigQuery")
+            return True
+
+        except Exception as e:
+            print(f"⚠️  Failed to load from BigQuery: {e}")
+            return False
+
+    def _save_inventory_mapping_to_bigquery(self, inventory_source: str, deal_id: int) -> bool:
+        """
+        Save a single inventory source mapping to BigQuery.
+
+        Args:
+            inventory_source: The inventory source name
+            deal_id: The deal ID
+
+        Returns:
+            True if saved successfully, False otherwise
+        """
+        try:
+            client = self._get_bigquery_client()
+            if not client:
+                return False
+
+            # Use MERGE to insert or update
+            query = f"""
+                MERGE `{INVENTORY_MAPPING_TABLE}` AS target
+                USING (SELECT @inventory_source AS inventory_source, @deal_id AS deal_id) AS source
+                ON target.inventory_source = source.inventory_source
+                WHEN MATCHED THEN
+                    UPDATE SET deal_id = source.deal_id, last_updated = CURRENT_TIMESTAMP()
+                WHEN NOT MATCHED THEN
+                    INSERT (inventory_source, deal_id, created_date, last_updated)
+                    VALUES (source.inventory_source, source.deal_id, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("inventory_source", "STRING", inventory_source),
+                    bigquery.ScalarQueryParameter("deal_id", "INT64", deal_id),
+                ]
+            )
+
+            client.query(query, job_config=job_config).result()
+
+            print(f"💾 Inventory mapping saved to BigQuery")
+            return True
+
+        except Exception as e:
+            print(f"⚠️  Failed to save to BigQuery: {e}")
+            return False
+
+    def _delete_inventory_mapping_from_bigquery(self, inventory_source: str) -> bool:
+        """
+        Delete an inventory source mapping from BigQuery.
+
+        Args:
+            inventory_source: The inventory source name to delete
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        try:
+            client = self._get_bigquery_client()
+            if not client:
+                return False
+
+            query = f"""
+                DELETE FROM `{INVENTORY_MAPPING_TABLE}`
+                WHERE inventory_source = @inventory_source
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("inventory_source", "STRING", inventory_source),
+                ]
+            )
+
+            client.query(query, job_config=job_config).result()
+
+            print(f"🗑️  Deleted inventory mapping from BigQuery")
+            return True
+
+        except Exception as e:
+            print(f"⚠️  Failed to delete from BigQuery: {e}")
+            return False
 
     def _load_cache_from_file(self) -> bool:
         """
@@ -461,23 +581,26 @@ class DealLineItemCache:
         """
         # Ensure mappings are loaded
         if self._inventory_source_mapping is None or len(self._inventory_source_mapping) == 0:
-            # Try GitHub first, then local file
-            if self.github_config:
+            # Try BigQuery first, then GitHub, then local file
+            self._load_inventory_mapping_from_bigquery()
+            if not self._inventory_source_mapping and self.github_config:
                 self._load_inventory_mapping_from_github()
             if not self._inventory_source_mapping:
                 self._load_cache_from_file()
             if self._inventory_source_mapping is None:
                 self._inventory_source_mapping = {}
 
-        # Add the mapping
+        # Add the mapping to local cache
         self._inventory_source_mapping[inventory_source] = deal_id
 
-        # Save to GitHub first, then local fallback
-        saved = False
-        if self.github_config:
-            saved = self._save_inventory_mapping_to_github()
+        # Save to BigQuery first (primary storage)
+        saved = self._save_inventory_mapping_to_bigquery(inventory_source, deal_id)
 
-        # Always save to local as backup
+        # Save to GitHub as backup if configured
+        if self.github_config:
+            self._save_inventory_mapping_to_github()
+
+        # Always save to local file as final fallback
         if self._cache_timestamp is None:
             self._cache_timestamp = datetime.now(timezone.utc)
         self._save_cache_to_file()
@@ -496,8 +619,9 @@ class DealLineItemCache:
         """
         # Ensure mappings are loaded
         if self._inventory_source_mapping is None or len(self._inventory_source_mapping) == 0:
-            # Try GitHub first, then local file
-            if self.github_config:
+            # Try BigQuery first, then GitHub, then local file
+            self._load_inventory_mapping_from_bigquery()
+            if not self._inventory_source_mapping and self.github_config:
                 self._load_inventory_mapping_from_github()
             if not self._inventory_source_mapping:
                 self._load_cache_from_file()
@@ -525,8 +649,9 @@ class DealLineItemCache:
         """
         # Ensure mappings are loaded
         if self._inventory_source_mapping is None or len(self._inventory_source_mapping) == 0:
-            # Try GitHub first, then local file
-            if self.github_config:
+            # Try BigQuery first, then GitHub, then local file
+            self._load_inventory_mapping_from_bigquery()
+            if not self._inventory_source_mapping and self.github_config:
                 self._load_inventory_mapping_from_github()
             if not self._inventory_source_mapping:
                 self._load_cache_from_file()
@@ -547,8 +672,9 @@ class DealLineItemCache:
         """
         # Ensure mappings are loaded
         if self._inventory_source_mapping is None or len(self._inventory_source_mapping) == 0:
-            # Try GitHub first, then local file
-            if self.github_config:
+            # Try BigQuery first, then GitHub, then local file
+            self._load_inventory_mapping_from_bigquery()
+            if not self._inventory_source_mapping and self.github_config:
                 self._load_inventory_mapping_from_github()
             if not self._inventory_source_mapping:
                 self._load_cache_from_file()
@@ -558,11 +684,14 @@ class DealLineItemCache:
         if inventory_source in self._inventory_source_mapping:
             del self._inventory_source_mapping[inventory_source]
 
-            # Save to GitHub first, then local fallback
+            # Delete from BigQuery first (primary storage)
+            self._delete_inventory_mapping_from_bigquery(inventory_source)
+
+            # Save to GitHub as backup if configured
             if self.github_config:
                 self._save_inventory_mapping_to_github()
 
-            # Always save to local as backup
+            # Always save to local file as final fallback
             self._save_cache_to_file()
             print(f"🗑️  Removed mapping for '{inventory_source}'")
             return True
