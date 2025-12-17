@@ -973,11 +973,12 @@ def create_inventory_app_ranking(df):
     """Create a section for selecting inventory source and ranking/filtering apps/URLs by any KPI"""
     if 'Inventory Source' in df.columns and 'App/URL' in df.columns:
         st.subheader("🎯 App/URL Performance Analysis by Inventory Source")
-        
+
         # Get unique inventory sources
         inventory_sources = df['Inventory Source'].unique()
         inventory_sources = sorted([source for source in inventory_sources if pd.notna(source)])
-        
+
+        # Compact filter section
         col1, col2, col3 = st.columns([2, 2, 2])
 
         with col1:
@@ -1032,28 +1033,28 @@ def create_inventory_app_ranking(df):
                 # Add CPA if both cost and conversion data exist
                 if has_cost_data and has_conversion_data:
                     available_ranking_kpis.append('CPA')
-                
+
                 # Add VCR if video data exists
                 if 'Starts (Video)' in source_data.columns and 'Complete Views (Video)' in source_data.columns:
                     if source_data['Starts (Video)'].sum() > 0:
                         available_ranking_kpis.append('VCR')
-            
+
             ranking_kpi = st.selectbox(
                 "Rank/Filter by KPI:",
                 options=available_ranking_kpis,
                 help="Choose which metric to rank and filter URLs by"
             )
-        
-        # Dynamic threshold controls based on selected KPI
-        col1, col2, col3 = st.columns([1, 1, 2])
-        
+
+        # Threshold controls
+        col1, col2 = st.columns([1, 3])
+
         with col1:
             threshold_direction = st.selectbox(
                 "Show URLs:",
                 ["Above", "Below"],
                 help=f"Show URLs above or below the {ranking_kpi} threshold"
             )
-        
+
         with col2:
             # Set threshold parameters based on KPI type
             if ranking_kpi in ['CTR', 'VCR']:
@@ -1071,7 +1072,7 @@ def create_inventory_app_ranking(df):
                 min_val, max_val, default_val, step_val = 1, 1000000, 100, 1
                 format_str = "%d"
                 unit = ""
-            
+
             threshold_value = st.number_input(
                 f"{ranking_kpi} Threshold {('(' + unit + ')') if unit else ''}:",
                 min_value=min_val,
@@ -1081,9 +1082,6 @@ def create_inventory_app_ranking(df):
                 format=format_str,
                 help=f"Enter {ranking_kpi} threshold"
             )
-        
-        with col3:
-            st.write("")  # Spacing
         
         if selected_source:
             # Filter data for selected inventory source
@@ -1203,149 +1201,119 @@ def create_inventory_app_ranking(df):
             
             # Display results
             if len(filtered_apps) > 0:
-                # Header with copy and upload functionality
-                col1, col2, col3 = st.columns([2, 1, 1])
-                with col1:
-                    # Show creative size filter info if not all sizes selected
-                    if selected_creative_sizes and 'Creative Size' in df.columns:
-                        all_sizes = sorted([size for size in df[df['Inventory Source'] == selected_source]['Creative Size'].unique() if pd.notna(size)])
-                        if len(selected_creative_sizes) != len(all_sizes):
-                            if len(selected_creative_sizes) <= 3:
-                                size_filter_text = f" ({', '.join(selected_creative_sizes)})"
-                            else:
-                                size_filter_text = f" ({len(selected_creative_sizes)} sizes)"
+                # Show creative size filter info if not all sizes selected
+                if selected_creative_sizes and 'Creative Size' in df.columns:
+                    all_sizes = sorted([size for size in df[df['Inventory Source'] == selected_source]['Creative Size'].unique() if pd.notna(size)])
+                    if len(selected_creative_sizes) != len(all_sizes):
+                        if len(selected_creative_sizes) <= 3:
+                            size_filter_text = f" ({', '.join(selected_creative_sizes)})"
                         else:
-                            size_filter_text = ""
+                            size_filter_text = f" ({len(selected_creative_sizes)} sizes)"
                     else:
                         size_filter_text = ""
-                    st.write(f"**{len(filtered_apps)} Apps/URLs with {ranking_kpi} {direction_text}** for *{selected_source}*{size_filter_text}")
+                else:
+                    size_filter_text = ""
+
+                st.write(f"**{len(filtered_apps)} Apps/URLs with {ranking_kpi} {direction_text}** for *{selected_source}*{size_filter_text}")
+
+                # Create URL list for copying
+                url_list = filtered_apps['App/URL'].tolist()
+                url_text = '\n'.join(url_list)
+
+                # Look up the Deal ID for this inventory source using our mapping cache
+                deal_id = get_deal_id_for_inventory_source(selected_source)
+                line_item_id = None
+                inventory_list_id = None
+                inventory_list_info = None
+
+                # Look up line item ID for this deal
+                if deal_id:
+                    line_item_id = get_line_item_for_deal(deal_id)
+
+                # Look up inventory list for this deal
+                if deal_id:
+                    with st.spinner("Looking up inventory list..."):
+                        inventory_list_info = get_inventory_list_summary_for_deal(deal_id)
+                        if inventory_list_info and inventory_list_info.get('primary_list_id'):
+                            inventory_list_id = inventory_list_info['primary_list_id']
+
+                # Actions and Info section
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    # Action buttons in a single row
+                    btn_col1, btn_col2 = st.columns(2)
+
+                    with btn_col1:
+                        # Show expandable text area with URLs for easy copying
+                        with st.expander(f"📋 Copy {len(url_list)} URLs", expanded=False):
+                            st.text_area(
+                                "Select all and copy:",
+                                url_text,
+                                height=150,
+                                label_visibility="collapsed"
+                            )
+                            st.caption("Ctrl/Cmd+A to select all, then Ctrl/Cmd+C to copy")
+
+                    with btn_col2:
+                        # Show upload button with appropriate state
+                        if inventory_list_id:
+                            if st.button("🚀 Upload to Xandr", key="upload_domains_btn", use_container_width=True, help="Create new list, upload domains, and replace old list"):
+                                with st.spinner(f"Creating new list and uploading {len(url_list)} domains..."):
+                                    try:
+                                        # Use the professional rotation system
+                                        result = rotate_inventory_list(
+                                            line_item_id=line_item_id,
+                                            domains=url_list
+                                        )
+
+                                        if result.get('success'):
+                                            # Show detailed success message
+                                            st.success(f"✅ {result['message']}")
+
+                                            # Show details in an expander
+                                            with st.expander("📋 Operation Details", expanded=False):
+                                                st.write(f"**New List:** {result['new_list_name']}")
+                                                st.write(f"**New List UI ID:** {result['new_list_ui_id']}")
+                                                st.write(f"**Domains Added:** {result['domains_added']}")
+                                                if result.get('old_list_name'):
+                                                    st.write(f"**Old List (Deleted):** {result['old_list_name']}")
+                                                else:
+                                                    st.info("No previous list to delete (first list created)")
+                                        else:
+                                            st.error(f"❌ {result['message']}")
+
+                                    except Exception as e:
+                                        st.error(f"❌ Upload failed: {str(e)}")
+                        elif deal_id:
+                            st.warning("⚠️ No inventory list found")
+                        else:
+                            st.warning("⚠️ Source not mapped to Deal ID")
 
                 with col2:
-                    # Create URL list for copying
-                    url_list = filtered_apps['App/URL'].tolist()
-                    url_text = '\n'.join(url_list)
-
-                    # Show expandable text area with URLs for easy copying
-                    with st.expander(f"📋 Copy {len(url_list)} URLs"):
-                        st.text_area(
-                            "Select all and copy:",
-                            url_text,
-                            height=150,
-                            label_visibility="collapsed"
-                        )
-                        st.caption("Click in the box, Ctrl/Cmd+A to select all, then Ctrl/Cmd+C to copy")
-
-                with col3:
-                    # Upload to Xandr button with dynamic list lookup
-                    st.write("")  # Spacing
-
-                    # Look up the Deal ID for this inventory source using our mapping cache
-                    deal_id = None
-                    line_item_id = None
-                    inventory_list_id = None
-                    inventory_list_info = None
-
-                    # Use the inventory source mapping cache
-                    deal_id = get_deal_id_for_inventory_source(selected_source)
-
-                    # Look up line item ID for this deal
-                    if deal_id:
-                        line_item_id = get_line_item_for_deal(deal_id)
-
-                    # Look up inventory list for this deal
-                    if deal_id:
-                        with st.spinner("Looking up inventory list..."):
-                            inventory_list_info = get_inventory_list_summary_for_deal(deal_id)
-                            if inventory_list_info and inventory_list_info.get('primary_list_id'):
-                                inventory_list_id = inventory_list_info['primary_list_id']
-
-                    # Show upload button with appropriate state
+                    # Info box with metadata
                     if inventory_list_id:
-                        # Get the profile ID (UI ID) for display
                         profile_list_id = inventory_list_info.get('primary_profile_id') if inventory_list_info else None
 
-                        if st.button("🚀 Upload to Xandr", key="upload_domains_btn", help=f"Create new list, upload domains, and replace old list"):
-                            with st.spinner(f"Creating new list and uploading {len(url_list)} domains..."):
-                                try:
-                                    # Use the professional rotation system
-                                    result = rotate_inventory_list(
-                                        line_item_id=line_item_id,
-                                        domains=url_list
-                                    )
-
-                                    if result.get('success'):
-                                        # Show detailed success message
-                                        st.success(f"✅ {result['message']}")
-
-                                        # Show details in an expander
-                                        with st.expander("📋 Operation Details", expanded=False):
-                                            st.write(f"**New List:** {result['new_list_name']}")
-                                            st.write(f"**New List UI ID:** {result['new_list_ui_id']}")
-                                            st.write(f"**Domains Added:** {result['domains_added']}")
-                                            if result.get('old_list_name'):
-                                                st.write(f"**Old List (Deleted):** {result['old_list_name']}")
-                                            else:
-                                                st.info("No previous list to delete (first list created)")
-                                    else:
-                                        st.error(f"❌ {result['message']}")
-
-                                except Exception as e:
-                                    st.error(f"❌ Upload failed: {str(e)}")
-
-                        # Display inventory list info - show UI ID to user
+                        # Display inventory list info
                         if inventory_list_info and inventory_list_info.get('lists'):
                             primary_list = next((lst for lst in inventory_list_info['lists'] if lst.get('api_id') == inventory_list_id), None)
                             if primary_list:
                                 st.caption(f"📋 List: {primary_list.get('name', 'Unknown')}")
-                                # Display profile ID (UI ID) to user
-                                display_id = profile_list_id if profile_list_id else inventory_list_id
-                                st.caption(f"🆔 List ID: {display_id}")
-                                st.caption(f"🔗 Deal ID: {deal_id}")
-                                if line_item_id:
-                                    st.caption(f"📝 Line Item ID: {line_item_id}")
-                            else:
-                                display_id = profile_list_id if profile_list_id else inventory_list_id
-                                st.caption(f"🆔 List ID: {display_id}")
-                                st.caption(f"🔗 Deal ID: {deal_id}")
-                                if line_item_id:
-                                    st.caption(f"📝 Line Item ID: {line_item_id}")
-                        else:
-                            display_id = profile_list_id if profile_list_id else inventory_list_id
-                            st.caption(f"🆔 List ID: {display_id}")
-                            st.caption(f"🔗 Deal ID: {deal_id}")
-                            if line_item_id:
-                                st.caption(f"📝 Line Item ID: {line_item_id}")
-                    elif deal_id:
-                        st.warning("⚠️ No inventory list found for this deal")
+
+                        # Display IDs
+                        display_id = profile_list_id if profile_list_id else inventory_list_id
+                        st.caption(f"🆔 List ID: {display_id}")
                         st.caption(f"🔗 Deal ID: {deal_id}")
                         if line_item_id:
                             st.caption(f"📝 Line Item ID: {line_item_id}")
-                        st.caption("Check if the deal has a profile with inventory targeting configured")
+                    elif deal_id:
+                        st.caption(f"🔗 Deal ID: {deal_id}")
+                        if line_item_id:
+                            st.caption(f"📝 Line Item ID: {line_item_id}")
+                        st.caption("⚠️ Check deal has profile with inventory targeting")
                     else:
-                        st.warning("⚠️ This inventory source is not mapped to a Deal ID")
-                        st.caption("📝 Use the 'Manage Inventory Source Mappings' section above to map this source")
-                        st.caption("This is a one-time setup that will be remembered for future reports")
-                
-                # Format data for display
-                display_data = filtered_apps.copy()
-                display_data['Impressions'] = display_data['Impressions'].apply(lambda x: f"{x:,.0f}")
-                display_data['Clicks'] = display_data['Clicks'].apply(lambda x: f"{x:,.0f}")
-                display_data['CTR'] = display_data['CTR'].apply(lambda x: f"{x:.4f}%")
-                
-                # Format additional KPIs if they exist
-                if 'VCR' in display_data.columns:
-                    display_data['VCR'] = display_data['VCR'].apply(lambda x: f"{x:.2f}%")
-                if 'CPC' in display_data.columns:
-                    display_data['CPC'] = display_data['CPC'].apply(lambda x: f"{x:.2f}")
-                if 'CPA' in display_data.columns:
-                    display_data['CPA'] = display_data['CPA'].apply(lambda x: f"{x:.2f}")
-                if 'Cost' in display_data.columns:
-                    display_data['Cost'] = display_data['Cost'].apply(lambda x: f"{x:.2f}")
-                if 'Conversions' in display_data.columns:
-                    display_data['Conversions'] = display_data['Conversions'].apply(lambda x: f"{x:,.0f}")
-                
-                # Show all filtered results
-                st.dataframe(display_data, use_container_width=True, hide_index=True)
+                        st.caption("📝 Map this source in 'Manage Inventory Source Mappings'")
                 
                 # Summary stats
                 col1, col2, col3, col4 = st.columns(4)
@@ -1360,17 +1328,38 @@ def create_inventory_app_ranking(df):
                         format_val = f"{avg_value:.4f}%" if ranking_kpi == 'CTR' else f"{avg_value:.2f}%"
                     else:
                         format_val = f"{avg_value:.2f}"
-                    st.metric(f"Average {ranking_kpi}", format_val)
+                    st.metric(f"Avg {ranking_kpi}", format_val)
                 with col4:
                     # Show additional relevant metric
                     if ranking_kpi != 'CTR' and 'CTR' in filtered_apps.columns:
                         avg_ctr = filtered_apps['CTR'].mean()
-                        st.metric("Average CTR", f"{avg_ctr:.4f}%")
+                        st.metric("Avg CTR", f"{avg_ctr:.4f}%")
                     elif ranking_kpi != 'VCR' and 'VCR' in filtered_apps.columns and filtered_apps['VCR'].sum() > 0:
                         avg_vcr = filtered_apps[filtered_apps['VCR'] > 0]['VCR'].mean()
-                        st.metric("Average VCR", f"{avg_vcr:.2f}%")
+                        st.metric("Avg VCR", f"{avg_vcr:.2f}%")
                     else:
                         st.metric("", "")
+
+                # Format data for display
+                display_data = filtered_apps.copy()
+                display_data['Impressions'] = display_data['Impressions'].apply(lambda x: f"{x:,.0f}")
+                display_data['Clicks'] = display_data['Clicks'].apply(lambda x: f"{x:,.0f}")
+                display_data['CTR'] = display_data['CTR'].apply(lambda x: f"{x:.4f}%")
+
+                # Format additional KPIs if they exist
+                if 'VCR' in display_data.columns:
+                    display_data['VCR'] = display_data['VCR'].apply(lambda x: f"{x:.2f}%")
+                if 'CPC' in display_data.columns:
+                    display_data['CPC'] = display_data['CPC'].apply(lambda x: f"{x:.2f}")
+                if 'CPA' in display_data.columns:
+                    display_data['CPA'] = display_data['CPA'].apply(lambda x: f"{x:.2f}")
+                if 'Cost' in display_data.columns:
+                    display_data['Cost'] = display_data['Cost'].apply(lambda x: f"{x:.2f}")
+                if 'Conversions' in display_data.columns:
+                    display_data['Conversions'] = display_data['Conversions'].apply(lambda x: f"{x:,.0f}")
+
+                # Show all filtered results
+                st.dataframe(display_data, use_container_width=True, hide_index=True)
             else:
                 # Show creative size filter info if not all sizes selected
                 if selected_creative_sizes and 'Creative Size' in df.columns:
