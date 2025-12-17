@@ -581,12 +581,12 @@ class DealLineItemCache:
         """
         # Ensure mappings are loaded
         if self._inventory_source_mapping is None or len(self._inventory_source_mapping) == 0:
-            # Try BigQuery first, then GitHub, then local file
+            # BACKUPS DISABLED FOR TESTING - Only load from BigQuery
             self._load_inventory_mapping_from_bigquery()
-            if not self._inventory_source_mapping and self.github_config:
-                self._load_inventory_mapping_from_github()
-            if not self._inventory_source_mapping:
-                self._load_cache_from_file()
+            # if not self._inventory_source_mapping and self.github_config:
+            #     self._load_inventory_mapping_from_github()
+            # if not self._inventory_source_mapping:
+            #     self._load_cache_from_file()
             if self._inventory_source_mapping is None:
                 self._inventory_source_mapping = {}
 
@@ -620,12 +620,12 @@ class DealLineItemCache:
         """
         # Ensure mappings are loaded
         if self._inventory_source_mapping is None or len(self._inventory_source_mapping) == 0:
-            # Try BigQuery first, then GitHub, then local file
+            # BACKUPS DISABLED FOR TESTING - Only load from BigQuery
             self._load_inventory_mapping_from_bigquery()
-            if not self._inventory_source_mapping and self.github_config:
-                self._load_inventory_mapping_from_github()
-            if not self._inventory_source_mapping:
-                self._load_cache_from_file()
+            # if not self._inventory_source_mapping and self.github_config:
+            #     self._load_inventory_mapping_from_github()
+            # if not self._inventory_source_mapping:
+            #     self._load_cache_from_file()
             if self._inventory_source_mapping is None:
                 self._inventory_source_mapping = {}
 
@@ -650,12 +650,12 @@ class DealLineItemCache:
         """
         # Ensure mappings are loaded
         if self._inventory_source_mapping is None or len(self._inventory_source_mapping) == 0:
-            # Try BigQuery first, then GitHub, then local file
+            # BACKUPS DISABLED FOR TESTING - Only load from BigQuery
             self._load_inventory_mapping_from_bigquery()
-            if not self._inventory_source_mapping and self.github_config:
-                self._load_inventory_mapping_from_github()
-            if not self._inventory_source_mapping:
-                self._load_cache_from_file()
+            # if not self._inventory_source_mapping and self.github_config:
+            #     self._load_inventory_mapping_from_github()
+            # if not self._inventory_source_mapping:
+            #     self._load_cache_from_file()
             if self._inventory_source_mapping is None:
                 self._inventory_source_mapping = {}
 
@@ -673,12 +673,12 @@ class DealLineItemCache:
         """
         # Ensure mappings are loaded
         if self._inventory_source_mapping is None or len(self._inventory_source_mapping) == 0:
-            # Try BigQuery first, then GitHub, then local file
+            # BACKUPS DISABLED FOR TESTING - Only load from BigQuery
             self._load_inventory_mapping_from_bigquery()
-            if not self._inventory_source_mapping and self.github_config:
-                self._load_inventory_mapping_from_github()
-            if not self._inventory_source_mapping:
-                self._load_cache_from_file()
+            # if not self._inventory_source_mapping and self.github_config:
+            #     self._load_inventory_mapping_from_github()
+            # if not self._inventory_source_mapping:
+            #     self._load_cache_from_file()
             if self._inventory_source_mapping is None:
                 self._inventory_source_mapping = {}
 
