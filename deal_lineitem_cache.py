@@ -593,17 +593,18 @@ class DealLineItemCache:
         # Add the mapping to local cache
         self._inventory_source_mapping[inventory_source] = deal_id
 
-        # Save to BigQuery first (primary storage)
+        # Save to BigQuery (primary storage)
         saved = self._save_inventory_mapping_to_bigquery(inventory_source, deal_id)
 
-        # Save to GitHub as backup if configured
-        if self.github_config:
-            self._save_inventory_mapping_to_github()
+        # BACKUPS DISABLED FOR TESTING
+        # # Save to GitHub as backup if configured
+        # if self.github_config:
+        #     self._save_inventory_mapping_to_github()
 
-        # Always save to local file as final fallback
-        if self._cache_timestamp is None:
-            self._cache_timestamp = datetime.now(timezone.utc)
-        self._save_cache_to_file()
+        # # Always save to local file as final fallback
+        # if self._cache_timestamp is None:
+        #     self._cache_timestamp = datetime.now(timezone.utc)
+        # self._save_cache_to_file()
 
         print(f"✅ Mapped '{inventory_source}' → Deal ID {deal_id}")
 
@@ -684,15 +685,16 @@ class DealLineItemCache:
         if inventory_source in self._inventory_source_mapping:
             del self._inventory_source_mapping[inventory_source]
 
-            # Delete from BigQuery first (primary storage)
+            # Delete from BigQuery (primary storage)
             self._delete_inventory_mapping_from_bigquery(inventory_source)
 
-            # Save to GitHub as backup if configured
-            if self.github_config:
-                self._save_inventory_mapping_to_github()
+            # BACKUPS DISABLED FOR TESTING
+            # # Save to GitHub as backup if configured
+            # if self.github_config:
+            #     self._save_inventory_mapping_to_github()
 
-            # Always save to local file as final fallback
-            self._save_cache_to_file()
+            # # Always save to local file as final fallback
+            # self._save_cache_to_file()
             print(f"🗑️  Removed mapping for '{inventory_source}'")
             return True
 
