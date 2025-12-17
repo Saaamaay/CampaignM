@@ -1691,11 +1691,11 @@ def create_creative_size_chart(df_clean, kpi='Impressions', metrics=None):
     )])
 
     fig.update_layout(
-        title=f"{kpi} by Creative Size (Top 5)",
+        title=None,
         showlegend=True,
         legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02),
-        margin=dict(l=10, r=100, t=50, b=10),
-        height=400
+        margin=dict(l=10, r=100, t=10, b=10),
+        height=300
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -2155,7 +2155,32 @@ def show_campaign_overview():
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        create_device_chart(df_clean)
+        st.markdown("**📊 Creative Size Breakdown**")
+
+        # KPI selector for pie chart
+        pie_kpi_options = ['Impressions', 'Clicks', 'CTR']
+        if metrics['cost'] > 0:
+            pie_kpi_options.append('Media Spend')
+        if metrics['conversions'] > 0:
+            pie_kpi_options.append('Conversions')
+        if metrics['starts'] > 0:
+            pie_kpi_options.extend(['Video Starts', 'Video Completes', 'VCR'])
+
+        saved_pie_kpi = st.session_state.kpi_settings.get('pie_kpi', 'Impressions')
+        pie_index = pie_kpi_options.index(saved_pie_kpi) if saved_pie_kpi in pie_kpi_options else 0
+
+        selected_pie_kpi = st.selectbox(
+            "Select KPI for pie chart:",
+            options=pie_kpi_options,
+            index=pie_index,
+            help="Choose which metric to show",
+            key="pie_kpi_selectbox"
+        )
+
+        if selected_pie_kpi != st.session_state.kpi_settings.get('pie_kpi'):
+            st.session_state.kpi_settings['pie_kpi'] = selected_pie_kpi
+
+        create_creative_size_chart(df_clean, selected_pie_kpi, metrics)
 
     with col2:
         st.markdown("**📈 Daily Performance Trend**")
@@ -2285,37 +2310,6 @@ def show_campaign_overview():
     with col4:
         if st.button("🔄", help="Refresh data from BigQuery", use_container_width=True):
             st.rerun()
-
-    # Main KPI selector for Creative Size analysis
-    st.markdown("### 📊 Creative Size Analysis")
-
-    # Available KPIs for creative size breakdown
-    kpi_options = ['Impressions', 'Clicks', 'CTR']
-    if metrics['cost'] > 0:
-        kpi_options.append('Media Spend')
-    if metrics['conversions'] > 0:
-        kpi_options.append('Conversions')
-    if metrics['starts'] > 0:
-        kpi_options.extend(['Video Starts', 'Video Completes', 'VCR'])
-
-    # Get saved KPI or default to Impressions
-    saved_creative_kpi = st.session_state.get('creative_size_kpi', 'Impressions')
-    creative_kpi_index = kpi_options.index(saved_creative_kpi) if saved_creative_kpi in kpi_options else 0
-
-    selected_creative_kpi = st.selectbox(
-        "Select Main KPI for Creative Size breakdown:",
-        options=kpi_options,
-        index=creative_kpi_index,
-        help="Choose which metric to analyze by Creative Size",
-        key="creative_size_kpi_selector"
-    )
-
-    # Save the selection
-    if selected_creative_kpi != st.session_state.get('creative_size_kpi'):
-        st.session_state['creative_size_kpi'] = selected_creative_kpi
-
-    # Display the creative size chart with selected KPI
-    create_creative_size_chart(df_clean, selected_creative_kpi, metrics)
 
     # Inventory source mapping manager
     all_mappings = get_all_inventory_source_mappings()
