@@ -2151,17 +2151,6 @@ def show_campaign_overview():
     st.subheader("Overview")
     create_overview_cards(metrics)
 
-    st.subheader("Key Performance Indicators")
-
-    # Show all available KPIs
-    available_kpis = ['CTR', 'VCR']
-    if metrics['cost'] > 0:
-        available_kpis.extend(['CPC'])
-    if metrics['conversions'] > 0:
-        available_kpis.extend(['CPA'])
-
-    create_kpi_cards(metrics, available_kpis)
-
     # Side-by-side charts
     col1, col2 = st.columns([1, 2])
 
