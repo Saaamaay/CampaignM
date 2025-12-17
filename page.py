@@ -2103,14 +2103,6 @@ def show_campaign_overview():
     """Display detailed overview page for a specific campaign"""
     campaign_name = st.session_state.selected_campaign
 
-    # Top navigation bar
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        if st.button("← Back to Home"):
-            st.session_state.current_view = "home"
-            st.rerun()
-    with col2:
-        st.title(f"📊 {campaign_name}")
 
     # Get campaign metadata
     campaign_meta = get_campaign_by_name(campaign_name)
@@ -2336,6 +2328,12 @@ def show_campaign_overview():
                     st.success(message)
                 else:
                     st.info(message)
+
+    # Back to home button at bottom
+    st.divider()
+    if st.button("← Back to Home"):
+        st.session_state.current_view = "home"
+        st.rerun()
 
 
 def main():
